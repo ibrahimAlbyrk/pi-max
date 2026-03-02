@@ -1,5 +1,5 @@
 {
-	"name": "@mariozechner/pi-coding-agent",
+	"name": "@agentic-indy/pi-max",
 	"version": "0.55.3",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
