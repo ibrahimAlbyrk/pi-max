@@ -111,10 +111,7 @@ export class SubProcessAgent implements AgentHandle {
       args.push("--append-system-prompt", filePath);
     }
 
-    // 3. Emit started event
-    this.emitAgentEvent("agent:started");
-
-    // 4. Spawn pi process with stdin OPEN for RPC commands
+    // 3. Spawn pi process with stdin OPEN for RPC commands
     this.proc = spawn("pi", args, {
       cwd: this.cwd,
       shell: false,
