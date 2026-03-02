@@ -1,0 +1,12 @@
+{
+  "name": "pi-notification",
+  "version": "0.1.0",
+  "description": "Notification extension for pi CLI — plays sound and sends OS notifications when agent finishes work",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}
