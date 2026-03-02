@@ -472,19 +472,12 @@ class NextTasksComponent implements Component {
 
 		const linesToShow = taskLines.slice(0, visibleCount);
 
-		// Apply fade effect: first 2 lines full color, then progressive fade
-		const FADE_START = 2; // lines before fade begins
+		// Apply subtle downward fade: last 3 lines get progressively dimmer
+		const fadeCount = 3;
+		const fadeStart = Math.max(0, linesToShow.length - fadeCount);
 		for (let i = 0; i < linesToShow.length; i++) {
-			const fadeIndex = Math.max(0, i - FADE_START);
-
-			// During collapsing transition, increase fade intensity
-			let effectiveFade = fadeIndex;
-			if (this.transitionDirection === "collapsing") {
-				const extraFade = Math.round((this.transitionFrame / TRANSITION_FRAMES) * 3);
-				effectiveFade = fadeIndex + extraFade;
-			}
-
-			const line = effectiveFade > 0 ? applyFade(linesToShow[i], effectiveFade) : linesToShow[i];
+			const fadeIndex = i >= fadeStart ? i - fadeStart + 1 : 0;
+			const line = fadeIndex > 0 ? applyFade(linesToShow[i], fadeIndex) : linesToShow[i];
 			lines.push(th.fg("borderMuted", "  │ ") + line);
 		}
 
