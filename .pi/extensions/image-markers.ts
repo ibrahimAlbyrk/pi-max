@@ -7,7 +7,7 @@
  * - Input transform: reads image files and embeds them directly into the user message
  *   as base64 image content, so LLM sees images immediately without needing read tool
  * - [Image #N] markers become clickable OSC 8 links (⌘+Click) in the user message
- * - Images are persisted to ~/.pi/images/ so they survive temp file cleanup
+ * - Images are persisted to /tmp/pi-images/ for automatic cleanup
  */
 
 import { CustomEditor, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -49,7 +49,7 @@ function getMimeType(filePath: string): string {
 }
 
 function getImageStorageDir(): string {
-	const dir = path.join(os.homedir(), ".pi", "images");
+	const dir = path.join(os.tmpdir(), "pi-images");
 	if (!fs.existsSync(dir)) {
 		fs.mkdirSync(dir, { recursive: true });
 	}
