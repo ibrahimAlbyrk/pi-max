@@ -467,8 +467,8 @@ export class AgentChannelManager {
             return cachedLines;
           },
           handleInput(data: string): boolean {
-            // Escape always closes (even with text in input)
-            if (matchesKey(data, "escape")) { closeFeed(null); return true; }
+            // Escape or Shift+Alt+Up always closes (even with text in input)
+            if (matchesKey(data, "escape") || matchesKey(data, "shift+down")) { closeFeed(null); return true; }
 
             // Enter: if input buffer has text, send message; otherwise ignore
             if (matchesKey(data, "return")) {
@@ -727,7 +727,7 @@ export class AgentChannelManager {
     }
     const scrollInfo = total > contentHeight
       ? `${ANSI_DIM}[${viewStart + 1}-${Math.min(viewEnd, total)}/${total}]${ANSI_RESET}` : "";
-    const helpText = `${ANSI_DIM}Esc:back  Tab:switch  PgUp/Dn:scroll  Enter:send${ANSI_RESET}`;
+    const helpText = `${ANSI_DIM}Shift+↓:back  Tab:switch  PgUp/Dn:scroll  Enter:send${ANSI_RESET}`;
     const rSide = scrollInfo ? `${scrollInfo}  ${helpText}` : helpText;
     const tabBar = tabParts.join(" ");
     const tabBarVis = stripAnsi(tabBar).length;
@@ -911,7 +911,7 @@ class InvisibleInputCapture implements Focusable {
   ) {}
 
   handleInput(data: string): void {
-    if (matchesKey(data, "escape")) { this.onEscape(); return; }
+    if (matchesKey(data, "shift+down")) { this.onEscape(); return; }
     if (matchesKey(data, "return")) { this.onEnter(); return; }
     if (matchesKey(data, "left") || matchesKey(data, "shift+tab")) { this.onLeft(); return; }
     if (matchesKey(data, "right") || matchesKey(data, "tab")) { this.onRight(); return; }

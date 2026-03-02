@@ -343,7 +343,7 @@ class ProcessPanel implements Focusable {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || matchesKey(data, "shift+up")) {
 			if (this.expandedIndex >= 0) {
 				// Close detail view, back to list
 				this.expandedIndex = -1;
