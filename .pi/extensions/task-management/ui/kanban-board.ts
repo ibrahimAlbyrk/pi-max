@@ -26,7 +26,7 @@ export type KanbanResult =
 interface KanbanColumn {
 	status: TaskStatus;
 	label: string;
-	tasks: Task[];
+	tasks: (Task & { depth: number })[];
 }
 
 /** Callback for in-place mutations (move/priority). Board stays open. */
@@ -111,17 +111,54 @@ export class KanbanBoard {
 	// ─── Data ────────────────────────────────────────────────────
 
 	private buildColumns(store: TaskStore): KanbanColumn[] {
-		// Only leaf tasks — group containers (parents) are excluded
-		const leafTasks = store.tasks.filter((t) => !isGroupContainer(store, t.id));
+		// Include all tasks, arranged hierarchically
+		const allTasks = this.organizeTasksHierarchically(store);
 		return COLUMN_DEFS.map((def) => ({
 			...def,
-			tasks: leafTasks
+			tasks: allTasks
 				.filter((t) => {
 					if (t.status === "deferred") return def.status === "todo";
 					return t.status === def.status;
 				})
 				.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2)),
 		}));
+	}
+
+	/**
+	 * Organize tasks hierarchically: parent tasks followed by their children.
+	 * Adds depth information for proper indentation.
+	 */
+	private organizeTasksHierarchically(store: TaskStore): (Task & { depth: number })[] {
+		const result: (Task & { depth: number })[] = [];
+		const processed = new Set<number>();
+
+		// Helper function to add task and its children recursively
+		const addTaskWithChildren = (task: Task, depth: number = 0) => {
+			if (processed.has(task.id)) return;
+			
+			processed.add(task.id);
+			result.push({ ...task, depth });
+
+			// Add children sorted by priority
+			const children = store.tasks
+				.filter((t) => t.parentId === task.id)
+				.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2));
+
+			for (const child of children) {
+				addTaskWithChildren(child, depth + 1);
+			}
+		};
+
+		// Start with root tasks (no parent) sorted by priority
+		const rootTasks = store.tasks
+			.filter((t) => t.parentId === null)
+			.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2));
+
+		for (const rootTask of rootTasks) {
+			addTaskWithChildren(rootTask);
+		}
+
+		return result;
 	}
 
 	/** Rebuild columns from current store state, then focus on a task. */
@@ -143,7 +180,7 @@ export class KanbanBoard {
 		return cols;
 	}
 
-	private getSelectedTask(): Task | null {
+	private getSelectedTask(): (Task & { depth: number }) | null {
 		const cols = this.getVisibleColumns(this.cachedWidth ?? 120);
 		const col = cols[this.activeCol];
 		if (!col || col.tasks.length === 0) return null;
@@ -267,31 +304,34 @@ export class KanbanBoard {
 		const oldStatus = task.status;
 		const newStatus = STATUS_ORDER[targetIdx];
 
-		// Mutate the task directly
-		task.status = newStatus;
+		// Find and mutate the actual task in the store (not the one with depth property)
+		const storeTask = this.store.tasks.find(t => t.id === task.id);
+		if (!storeTask) return;
+		
+		storeTask.status = newStatus;
 
 		// Auto-timestamps
-		if (newStatus === "in_progress" && !task.startedAt) {
-			task.startedAt = new Date().toISOString();
-			this.store.activeTaskId = task.id;
+		if (newStatus === "in_progress" && !storeTask.startedAt) {
+			storeTask.startedAt = new Date().toISOString();
+			this.store.activeTaskId = storeTask.id;
 		}
 		if (newStatus === "done") {
-			task.completedAt = new Date().toISOString();
-			if (task.startedAt) {
-				task.actualMinutes = Math.round(
-					(Date.now() - new Date(task.startedAt).getTime()) / 60000,
+			storeTask.completedAt = new Date().toISOString();
+			if (storeTask.startedAt) {
+				storeTask.actualMinutes = Math.round(
+					(Date.now() - new Date(storeTask.startedAt).getTime()) / 60000,
 				);
 			}
-			if (this.store.activeTaskId === task.id) {
+			if (this.store.activeTaskId === storeTask.id) {
 				this.store.activeTaskId = null;
 			}
 		}
 
 		// Auto-derive ancestor statuses
-		updateAncestorStatuses(this.store, task.parentId);
+		updateAncestorStatuses(this.store, storeTask.parentId);
 
 		// Notify for persistence (does NOT close the overlay)
-		this.onMutate({ type: "move", task, oldStatus, newStatus });
+		this.onMutate({ type: "move", task: storeTask, oldStatus, newStatus });
 
 		// Rebuild columns and re-focus the moved task
 		this.rebuildAndFocus(task.id);
@@ -309,9 +349,13 @@ export class KanbanBoard {
 		const oldPriority = task.priority;
 		const newPriority = priorities[(idx + 1) % priorities.length];
 
-		task.priority = newPriority;
+		// Find and mutate the actual task in the store
+		const storeTask = this.store.tasks.find(t => t.id === task.id);
+		if (!storeTask) return;
+		
+		storeTask.priority = newPriority;
 
-		this.onMutate({ type: "priority", task, oldPriority, newPriority });
+		this.onMutate({ type: "priority", task: storeTask, oldPriority, newPriority });
 
 		// Rebuild (priority sort may change row order) and re-focus
 		this.rebuildAndFocus(task.id);
@@ -340,9 +384,14 @@ export class KanbanBoard {
 
 		const oldPriority = task.priority;
 		const newPriority = priorities[targetIdx];
-		task.priority = newPriority;
+		
+		// Find and mutate the actual task in the store
+		const storeTask = this.store.tasks.find(t => t.id === task.id);
+		if (!storeTask) return;
+		
+		storeTask.priority = newPriority;
 
-		this.onMutate({ type: "priority", task, oldPriority, newPriority });
+		this.onMutate({ type: "priority", task: storeTask, oldPriority, newPriority });
 		this.rebuildAndFocus(task.id);
 	}
 
@@ -541,12 +590,16 @@ export class KanbanBoard {
 	// ─── Card Rendering ──────────────────────────────────────────
 
 	private renderCard(
-		task: Task,
+		task: Task & { depth: number },
 		colWidth: number,
 		isSelected: boolean,
 	): { l1: string; l2: string; l3: string } {
 		const th = this.theme;
-		const contentWidth = colWidth - 1;
+		
+		// Calculate indentation based on depth (2 spaces per level)
+		const indent = "  ".repeat(task.depth);
+		const indentWidth = task.depth * 2;
+		const contentWidth = colWidth - 1 - indentWidth;
 
 		const prefix = isSelected ? th.fg("accent", "▸") : " ";
 		const icon = STATUS_ICONS[task.status];
@@ -560,13 +613,13 @@ export class KanbanBoard {
 		const id = th.fg("accent", `#${task.id}`);
 		const pri = th.fg(PRIORITY_COLORS[task.priority] as any, `[${priorityLabel(task.priority)}]`);
 		const l1Raw = `${coloredIcon} ${id} ${pri}`;
-		const l1 = prefix + this.padToWidth(truncateToWidth(l1Raw, contentWidth), contentWidth);
+		const l1 = prefix + indent + this.padToWidth(truncateToWidth(l1Raw, contentWidth), contentWidth);
 
 		const titleTruncated = truncateToWidth(task.title, contentWidth);
 		const titleColored = isSelected ? th.fg("accent", titleTruncated)
 			: task.status === "done" ? th.fg("dim", titleTruncated)
 			: th.fg("text", titleTruncated);
-		const l2 = " " + this.padToWidth(titleColored, contentWidth);
+		const l2 = " " + indent + this.padToWidth(titleColored, contentWidth);
 
 		let contextText = "";
 		if (task.status === "in_progress" && task.startedAt) {
@@ -584,7 +637,7 @@ export class KanbanBoard {
 		} else if (task.assignee) {
 			contextText = `@${task.assignee}`;
 		}
-		const l3 = " " + this.padToWidth(th.fg("dim", truncateToWidth(contextText, contentWidth)), contentWidth);
+		const l3 = " " + indent + this.padToWidth(th.fg("dim", truncateToWidth(contextText, contentWidth)), contentWidth);
 
 		return { l1, l2, l3 };
 	}
