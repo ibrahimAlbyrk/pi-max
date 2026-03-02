@@ -14,6 +14,8 @@ const toolDescriptions: Record<string, string> = {
 	grep: "Search file contents for patterns (respects .gitignore)",
 	find: "Find files by glob pattern (respects .gitignore)",
 	ls: "List directory contents",
+	webfetch: "Fetch a web page and return its content as clean markdown (strips navigation, ads, boilerplate)",
+	websearch: "Search the web using DuckDuckGo (no API key required). Combine with webfetch to read full pages.",
 };
 
 export interface BuildSystemPromptOptions {
@@ -95,7 +97,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	const examplesPath = getExamplesPath();
 
 	// Build tools list based on selected tools (only built-in tools with known descriptions)
-	const tools = (selectedTools || ["read", "bash", "edit", "write"]).filter((t) => t in toolDescriptions);
+	const tools = (selectedTools || ["read", "bash", "edit", "write", "webfetch", "websearch"]).filter(
+		(t) => t in toolDescriptions,
+	);
 	const toolsList = tools.length > 0 ? tools.map((t) => `- ${t}: ${toolDescriptions[t]}`).join("\n") : "(none)";
 
 	// Build guidelines based on which tools are actually available

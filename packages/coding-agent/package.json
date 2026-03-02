@@ -43,6 +43,7 @@
 		"@mariozechner/pi-agent-core": "^0.55.3",
 		"@mariozechner/pi-ai": "^0.55.3",
 		"@mariozechner/pi-tui": "^0.55.3",
+		"@mozilla/readability": "^0.6.0",
 		"@silvia-odwyer/photon-node": "^0.3.4",
 		"chalk": "^5.5.0",
 		"cli-highlight": "^2.1.11",
@@ -52,9 +53,11 @@
 		"glob": "^13.0.1",
 		"hosted-git-info": "^9.0.2",
 		"ignore": "^7.0.5",
+		"linkedom": "^0.18.12",
 		"marked": "^15.0.12",
 		"minimatch": "^10.2.3",
 		"proper-lockfile": "^4.1.2",
+		"turndown": "^7.2.2",
 		"yaml": "^2.8.2"
 	},
 	"overrides": {
@@ -72,6 +75,7 @@
 		"@types/ms": "^2.1.0",
 		"@types/node": "^24.3.0",
 		"@types/proper-lockfile": "^4.1.4",
+		"@types/turndown": "^5.0.6",
 		"shx": "^0.4.0",
 		"typescript": "^5.7.3",
 		"vitest": "^3.2.4"

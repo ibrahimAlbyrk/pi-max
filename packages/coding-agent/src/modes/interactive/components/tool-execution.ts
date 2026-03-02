@@ -861,6 +861,94 @@ export class ToolExecutionComponent extends Container {
 					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 				}
 			}
+		} else if (this.toolName === "webfetch") {
+			const rawUrl = str(this.args?.url);
+			let urlDisplay: string;
+			if (rawUrl) {
+				try {
+					const parsed = new URL(rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`);
+					urlDisplay = theme.fg("accent", parsed.hostname + parsed.pathname);
+				} catch {
+					urlDisplay = theme.fg("accent", rawUrl);
+				}
+			} else {
+				urlDisplay = invalidArg;
+			}
+
+			text = `${theme.fg("toolTitle", theme.bold("webfetch"))} ${urlDisplay}`;
+
+			if (this.result) {
+				const details = this.result.details as
+					| {
+							title?: string;
+							statusCode?: number;
+							truncation?: { truncated: boolean; outputLines: number; outputBytes: number };
+					  }
+					| undefined;
+				const output = this.getTextOutput();
+
+				if (this.result.isError || (details?.statusCode && details.statusCode >= 400)) {
+					text += `\n  ${theme.fg("error", output || `HTTP ${details?.statusCode}`)}`;
+				} else if (this.expanded && output) {
+					// Expanded: show full content
+					if (details?.title) {
+						text += `\n  ${theme.fg("toolOutput", details.title)}`;
+					}
+					const bytes = details?.truncation?.outputBytes ?? Buffer.byteLength(output, "utf-8");
+					text += `\n  ${theme.fg("muted", formatSize(bytes))}`;
+					if (details?.truncation?.truncated) {
+						text += theme.fg("warning", " [truncated]");
+					}
+					text += `\n\n${output
+						.split("\n")
+						.map((line: string) => theme.fg("toolOutput", line))
+						.join("\n")}`;
+				} else {
+					// Collapsed: title + size only
+					const meta: string[] = [];
+					if (details?.title) {
+						meta.push(details.title);
+					}
+					const bytes = details?.truncation?.outputBytes ?? Buffer.byteLength(output, "utf-8");
+					meta.push(formatSize(bytes));
+					if (details?.truncation?.truncated) {
+						meta.push("truncated");
+					}
+					text += `\n  ${theme.fg("muted", meta.join(" · "))}`;
+				}
+			}
+		} else if (this.toolName === "websearch") {
+			const query = str(this.args?.query);
+			const site = str(this.args?.site);
+
+			text = `${theme.fg("toolTitle", theme.bold("websearch"))} ${query === null ? invalidArg : theme.fg("accent", `"${query}"`)}`;
+			if (site) {
+				text += theme.fg("toolOutput", ` site:${site}`);
+			}
+
+			if (this.result) {
+				const details = this.result.details as { resultCount?: number; provider?: string } | undefined;
+				const output = this.getTextOutput();
+
+				if (this.result.isError) {
+					text += `\n  ${theme.fg("error", output)}`;
+				} else if (this.expanded && output) {
+					// Expanded: show all results
+					if (details?.resultCount !== undefined) {
+						text += `\n  ${theme.fg("muted", `${details.resultCount} results via ${details.provider ?? "search"}`)}`;
+					}
+					text += `\n\n${output
+						.split("\n")
+						.filter((l: string) => l.trim())
+						.map((line: string) => theme.fg("toolOutput", line))
+						.join("\n")}`;
+				} else {
+					// Collapsed: result count only
+					if (details?.resultCount !== undefined) {
+						text += `\n  ${theme.fg("muted", `${details.resultCount} results via ${details.provider ?? "search"}`)}`;
+					}
+				}
+			}
 		} else {
 			// Generic tool (shouldn't reach here for custom tools)
 			text = theme.fg("toolTitle", theme.bold(this.toolName));

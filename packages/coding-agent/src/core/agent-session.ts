@@ -2029,7 +2029,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: ["read", "bash", "edit", "write", "webfetch", "websearch"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		const activeToolNameSet = new Set<string>(baseActiveToolNames);
 		if (options.includeAllExtensionTools) {
