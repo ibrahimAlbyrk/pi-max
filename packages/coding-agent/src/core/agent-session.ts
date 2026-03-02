@@ -748,10 +748,11 @@ export class AgentSession {
 					"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
 				);
 			}
+			const origCmd = expandedText !== currentText ? currentText : undefined;
 			if (options.streamingBehavior === "followUp") {
-				await this._queueFollowUp(expandedText, currentImages);
+				await this._queueFollowUp(expandedText, currentImages, origCmd);
 			} else {
-				await this._queueSteer(expandedText, currentImages);
+				await this._queueSteer(expandedText, currentImages, origCmd);
 			}
 			return;
 		}
@@ -799,11 +800,14 @@ export class AgentSession {
 		if (currentImages) {
 			userContent.push(...currentImages);
 		}
-		messages.push({
+		const userMessage: AgentMessage = {
 			role: "user",
 			content: userContent,
 			timestamp: Date.now(),
-		});
+			// Store original command if text was expanded (template/skill)
+			...(expandedText !== currentText ? { originalCommand: currentText } : {}),
+		};
+		messages.push(userMessage);
 
 		// Inject any pending "nextTurn" messages as context alongside the user message
 		for (const msg of this._pendingNextTurnMessages) {
@@ -923,7 +927,7 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueSteer(expandedText, images);
+		await this._queueSteer(expandedText, images, expandedText !== text ? text : undefined);
 	}
 
 	/**
@@ -943,13 +947,13 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueFollowUp(expandedText, images);
+		await this._queueFollowUp(expandedText, images, expandedText !== text ? text : undefined);
 	}
 
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueSteer(text: string, images?: ImageContent[], originalCommand?: string): Promise<void> {
 		this._steeringMessages.push(text);
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
@@ -959,13 +963,14 @@ export class AgentSession {
 			role: "user",
 			content,
 			timestamp: Date.now(),
+			...(originalCommand ? { originalCommand } : {}),
 		});
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueFollowUp(text: string, images?: ImageContent[], originalCommand?: string): Promise<void> {
 		this._followUpMessages.push(text);
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
@@ -975,6 +980,7 @@ export class AgentSession {
 			role: "user",
 			content,
 			timestamp: Date.now(),
+			...(originalCommand ? { originalCommand } : {}),
 		});
 	}
 

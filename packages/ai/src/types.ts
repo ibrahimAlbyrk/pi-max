@@ -169,6 +169,8 @@ export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
 	timestamp: number; // Unix timestamp in milliseconds
+	/** Original command text before prompt template/skill expansion (e.g., "/git:commit staged only") */
+	originalCommand?: string;
 }
 
 export interface AssistantMessage {
