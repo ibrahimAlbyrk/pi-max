@@ -1156,6 +1156,9 @@ export class AgentSession {
 			}
 		}
 
+		// Emit session_shutdown so extensions can clean up (e.g., subagents)
+		await this._extensionRunner?.emit({ type: "session_shutdown" });
+
 		this._disconnectFromAgent();
 		await this.abort();
 		this.agent.reset();
@@ -1176,6 +1179,9 @@ export class AgentSession {
 		}
 
 		this._reconnectToAgent();
+
+		// Emit session_start so extensions can reinitialize for the new session
+		await this._extensionRunner?.emit({ type: "session_start" });
 
 		// Emit session_switch event with reason "new" to extensions
 		if (this._extensionRunner) {
