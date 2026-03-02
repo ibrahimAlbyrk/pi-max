@@ -71,6 +71,7 @@ export class InProcessAgent implements AgentHandle {
   readonly color: string;
   readonly runtimeMode: AgentRuntimeMode = "inprocess";
   readonly task: string;
+  readonly systemPrompt: string;
 
   // State
   status: AgentStatus = "idle";
@@ -105,6 +106,7 @@ export class InProcessAgent implements AgentHandle {
     this.description = options.description || options.task;
     this.color = color;
     this.task = options.task;
+    this.systemPrompt = options.systemPrompt || `You are an agent named "${this.name}". Complete the assigned task.`;
     this.cwd = cwd;
     this.startedAt = Date.now();
     this.usage = createEmptyUsageStats();

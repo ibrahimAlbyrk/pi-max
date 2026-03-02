@@ -38,6 +38,7 @@ export class SubProcessAgent implements AgentHandle {
   readonly color: string;
   readonly runtimeMode: AgentRuntimeMode = "subprocess";
   readonly task: string;
+  readonly systemPrompt: string;
 
   // State
   status: AgentStatus = "idle";
@@ -79,6 +80,7 @@ export class SubProcessAgent implements AgentHandle {
     this.color = color;
     this.task = task;
     this.cwd = cwd;
+    this.systemPrompt = definition.systemPrompt;
     this.startedAt = Date.now();
     this.usage = createEmptyUsageStats();
   }

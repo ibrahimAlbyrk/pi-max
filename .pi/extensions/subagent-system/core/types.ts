@@ -145,6 +145,7 @@ export interface AgentHandle {
   readonly color: string;
   readonly runtimeMode: AgentRuntimeMode;
   readonly task: string;
+  readonly systemPrompt?: string;
 
   // State
   status: AgentStatus;
