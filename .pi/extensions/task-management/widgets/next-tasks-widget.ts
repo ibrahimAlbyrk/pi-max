@@ -11,8 +11,9 @@
 
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI } from "@mariozechner/pi-tui";
+import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { Theme } from "@mariozechner/pi-coding-agent";
-import type { TaskStore } from "../types.js";
+import type { TaskStore, Task } from "../types.js";
 import { isGroupContainer } from "../store.js";
 import { PRIORITY_COLORS, priorityLabel } from "../rendering/icons.js";
 import { truncate, PRIORITY_ORDER } from "../ui/helpers.js";
@@ -42,9 +43,10 @@ const MAX_VISIBLE_TASKS = 5;
 const TRANSITION_FRAME_MS = 35;
 const TRANSITION_FRAMES = 6;
 
-// ── Slide-in animation config ──
-const SLIDE_FRAME_MS = 30;
-const SLIDE_TOTAL_FRAMES = 8; // 8 frames × 30ms = 240ms total
+// ── Task animation config ──  
+const TASK_SLIDE_FRAME_MS = 60; // Faster
+const TASK_SLIDE_IN_FRAMES = 5; // 5 × 60ms = 300ms - much faster
+const SLIDE_DISTANCE = 12; // characters - shorter distance
 
 // ── Color math helpers (same as subagent-system/tui/agent-panel.ts) ──
 
@@ -88,7 +90,7 @@ function easeInOutCubic(t: number): number {
  * Smooth Gaussian bell curve sweeping left→right with ease-in-out timing.
  */
 function applyShine(text: string, baseAnsi: string, taskOffset: number = 0): string {
-	const chars = [...text];
+	const chars = Array.from(text);
 	const baseRgb = parseAnsiRgb(baseAnsi);
 	const totalWidth = chars.length + SHINE_WIDTH * 2;
 
@@ -119,21 +121,25 @@ function stripAnsi(str: string): string {
 	return str.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
+interface TaskAnimationState {
+	type: "slide-in";
+	progress: number; // 0-1
+	timer: ReturnType<typeof setInterval>;
+}
+
 class NextTasksComponent implements Component {
 	private shineTimer: ReturnType<typeof setInterval> | null = null;
 	private store: TaskStore;
 	private collapsed: boolean;
 
-	// Transition state
+	// Transition state (collapse/expand)
 	private transitionTimer: ReturnType<typeof setInterval> | null = null;
 	private transitionFrame = 0;
 	private transitionDirection: "collapsing" | "expanding" | null = null;
 
-	// Slide-in state
-	private slideTimer: ReturnType<typeof setInterval> | null = null;
-	private slideFrame = 0;
-	private isSliding = false;
-	private prevTaskIds: string = "";
+	// Task-level animations (add only)
+	private taskAnimationStates = new Map<number, TaskAnimationState>();
+	private prevTaskIds = new Set<number>();
 
 	constructor(
 		private tui: TUI,
@@ -143,35 +149,42 @@ class NextTasksComponent implements Component {
 	) {
 		this.store = store;
 		this.collapsed = collapsed;
-		this.prevTaskIds = this.getTaskFingerprint(store);
+		
+		// Use global state to preserve task tracking across widget recreations
+		this.prevTaskIds = lastKnownTaskIds.size > 0 ? lastKnownTaskIds : this.getCurrentTaskIds(store);
 		this.updateAnimationState();
 	}
 
-	private getTaskFingerprint(store: TaskStore): string {
-		return store.tasks
-			.filter((t) => !isGroupContainer(store, t.id))
-			.map((t) => `${t.id}:${t.status}`)
-			.join(",");
+	private getCurrentTaskIds(store: TaskStore): Set<number> {
+		return new Set(
+			store.tasks
+				.filter((t) => !isGroupContainer(store, t.id))
+				.map((t) => t.id)
+		);
 	}
 
 	updateState(store: TaskStore, collapsed: boolean): void {
 		const wasCollapsed = this.collapsed;
-		const newFingerprint = this.getTaskFingerprint(store);
-		const contentChanged = newFingerprint !== this.prevTaskIds;
-		this.prevTaskIds = newFingerprint;
+		const currentTaskIds = this.getCurrentTaskIds(store);
+
+		// Detect only added tasks (removed tasks just disappear instantly)
+		const addedTasks = Array.from(currentTaskIds).filter(id => !this.prevTaskIds.has(id));
 
 		this.store = store;
 		this.collapsed = collapsed;
 
-		// Trigger transition animation on collapse state change
+		// Trigger transition animation ONLY on collapse state change
 		if (wasCollapsed !== collapsed && this.store.tasks.length > 0) {
 			this.startTransition(collapsed ? "collapsing" : "expanding");
 		}
-		// Trigger slide-in when task content changes (not during collapse/expand)
-		else if (contentChanged && !this.collapsed && this.store.tasks.length > 0) {
-			this.startSlideIn();
+		
+		// Trigger slide-in animation for new tasks only
+		if (addedTasks.length > 0) {
+			addedTasks.forEach(id => this.startTaskSlideIn(id));
 		}
 
+		this.prevTaskIds = currentTaskIds;
+		lastKnownTaskIds = new Set(currentTaskIds); // Update global state
 		this.updateAnimationState();
 		this.tui.requestRender();
 	}
@@ -199,28 +212,64 @@ class NextTasksComponent implements Component {
 		this.transitionFrame = 0;
 	}
 
-	private startSlideIn(): void {
-		this.stopSlideIn();
-		this.isSliding = true;
-		this.slideFrame = 0;
+	private startTaskSlideIn(taskId: number): void {
+		this.stopTaskAnimation(taskId);
 
-		this.slideTimer = setInterval(() => {
-			this.slideFrame++;
-			if (this.slideFrame >= SLIDE_TOTAL_FRAMES) {
-				this.stopSlideIn();
-			}
-			this.tui.requestRender();
-		}, SLIDE_FRAME_MS);
+		const animState: TaskAnimationState = {
+			type: "slide-in",
+			progress: 0,
+			timer: setInterval(() => {
+				animState.progress += 1 / TASK_SLIDE_IN_FRAMES;
+				if (animState.progress >= 1) {
+					animState.progress = 1;
+					this.stopTaskAnimation(taskId);
+				}
+				this.tui.requestRender();
+			}, TASK_SLIDE_FRAME_MS)
+		};
+
+		this.taskAnimationStates.set(taskId, animState);
 	}
 
-	private stopSlideIn(): void {
-		if (this.slideTimer) {
-			clearInterval(this.slideTimer);
-			this.slideTimer = null;
+	private stopTaskAnimation(taskId: number): void {
+		const animState = this.taskAnimationStates.get(taskId);
+		if (animState) {
+			clearInterval(animState.timer);
+			this.taskAnimationStates.delete(taskId);
 		}
-		this.isSliding = false;
-		this.slideFrame = 0;
 	}
+
+	private stopAllTaskAnimations(): void {
+		for (const [taskId] of Array.from(this.taskAnimationStates)) {
+			this.stopTaskAnimation(taskId);
+		}
+	}
+
+	private renderTaskLineWithAnimation(baseContent: string, taskId: number): string {
+		const animState = this.taskAnimationStates.get(taskId);
+		if (!animState || animState.type !== "slide-in") return baseContent;
+
+		const th = this.theme;
+		
+		// Slide from RIGHT to LEFT (sağdan sola gelir)
+		const easeOut = 1 - Math.pow(1 - animState.progress, 3);
+		
+		// Start with spaces on the left, reduce as animation progresses
+		const maxOffset = SLIDE_DISTANCE;
+		const leftPadding = Math.round(maxOffset * (1 - easeOut));
+		const spaces = " ".repeat(Math.max(0, leftPadding));
+		
+		// Apply opacity dimming during animation
+		const dimmed = animState.progress < 0.7 
+			? th.fg("dim", stripAnsi(baseContent))
+			: baseContent;
+		
+		return spaces + dimmed;
+	}
+
+
+
+
 
 	private updateAnimationState(): void {
 		const hasInProgress = this.store.tasks.some((t) => t.status === "in_progress");
@@ -248,7 +297,7 @@ class NextTasksComponent implements Component {
 	dispose(): void {
 		this.stopShine();
 		this.stopTransition();
-		this.stopSlideIn();
+		this.stopAllTaskAnimations();
 	}
 
 	invalidate(): void {}
@@ -277,8 +326,10 @@ class NextTasksComponent implements Component {
 			});
 
 		// ── Distribute MAX_VISIBLE_TASKS slots: in_progress → todo → done ──
+		const effectiveMaxTasks = MAX_VISIBLE_TASKS;
+		
 		const totalAvailable = inProgress.length + todo.length + doneAll.length;
-		let remaining = MAX_VISIBLE_TASKS;
+		let remaining = effectiveMaxTasks;
 
 		const visibleInProgress = inProgress.slice(0, remaining);
 		remaining -= visibleInProgress.length;
@@ -344,7 +395,9 @@ class NextTasksComponent implements Component {
 			const baseAnsi = th.getFgAnsi("accent");
 			const shineTitle = applyShine(titleText, baseAnsi, idx);
 
-			taskLines.push(`${icon} ${id} ${pri} ${shineTitle}`);
+			const baseContent = `${icon} ${id} ${pri} ${shineTitle}`;
+			const animatedContent = this.renderTaskLineWithAnimation(baseContent, t.id);
+			if (animatedContent) taskLines.push(animatedContent);
 		}
 
 		for (const t of visibleTodo) {
@@ -353,7 +406,9 @@ class NextTasksComponent implements Component {
 			const pri = th.fg(PRIORITY_COLORS[t.priority] as any, `${priorityLabel(t.priority)}`);
 			const title = th.fg("text", truncate(t.title, 45));
 
-			taskLines.push(`${icon} ${id} ${pri} ${title}`);
+			const baseContent = `${icon} ${id} ${pri} ${title}`;
+			const animatedContent = this.renderTaskLineWithAnimation(baseContent, t.id);
+			if (animatedContent) taskLines.push(animatedContent);
 		}
 
 		for (const t of doneTasks) {
@@ -361,7 +416,9 @@ class NextTasksComponent implements Component {
 			const id = th.fg("dim", `#${t.id}`);
 			const title = th.strikethrough(th.fg("dim", truncate(t.title, 45)));
 
-			taskLines.push(`${icon} ${id}   ${title}`);
+			const baseContent = `${icon} ${id}   ${title}`;
+			const animatedContent = this.renderTaskLineWithAnimation(baseContent, t.id);
+			if (animatedContent) taskLines.push(animatedContent);
 		}
 
 		if (taskLines.length === 0) return [];
@@ -375,7 +432,7 @@ class NextTasksComponent implements Component {
 		const isTransitioning = this.transitionDirection !== null;
 
 		if (this.collapsed && !isTransitioning) {
-			// Collapsed: single line — first task only (active or next)
+			// Collapsed: single line — first task only (active or next)  
 			const collapseIndicator = th.fg("dim", `[${leafTasks.length} tasks] `);
 			const lines: string[] = [];
 			lines.push(
@@ -427,16 +484,6 @@ class NextTasksComponent implements Component {
 				effectiveFade = fadeIndex + extraFade;
 			}
 
-			// Slide-in: staggered reveal per line (top → bottom)
-			if (this.isSliding) {
-				const staggerDelay = i * 1.5; // each line delayed by 1.5 frames
-				const lineProgress = Math.max(0, Math.min(1, (this.slideFrame - staggerDelay) / (SLIDE_TOTAL_FRAMES * 0.5)));
-				if (lineProgress <= 0) continue; // not yet visible
-				// Map progress to extra fade (fully dim → no fade)
-				const slideFade = Math.round((1 - lineProgress) * (FADE_LEVELS.length - 1));
-				effectiveFade = Math.max(effectiveFade, slideFade);
-			}
-
 			const line = effectiveFade > 0 ? applyFade(linesToShow[i], effectiveFade) : linesToShow[i];
 			lines.push(th.fg("borderMuted", "  │ ") + line);
 		}
@@ -454,12 +501,14 @@ class NextTasksComponent implements Component {
 // ─── Persistent widget state ─────────────────────────────────────────
 
 let registeredComponent: NextTasksComponent | null = null;
+let lastKnownTaskIds: Set<number> = new Set();
 
 export function resetNextTasksWidget(): void {
 	if (registeredComponent) {
 		registeredComponent.dispose();
 		registeredComponent = null;
 	}
+	lastKnownTaskIds.clear(); // Clear global state
 }
 
 export function updateNextTasksWidget(store: TaskStore, ctx: ExtensionContext, collapsed: boolean): void {

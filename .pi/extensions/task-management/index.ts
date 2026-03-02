@@ -488,6 +488,11 @@ Examples:
 				}
 			}
 
+			// ── Widget Updates ───────────────────────────────────
+			if (MUTATING_ACTIONS.has(p.action) && !result.content[0]?.text?.startsWith("Error:")) {
+				refreshWidgets(_ctx);
+			}
+
 			return result;
 		},
 
