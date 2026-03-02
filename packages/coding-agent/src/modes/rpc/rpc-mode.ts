@@ -202,6 +202,10 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 			return undefined as never;
 		},
 
+		setEditorBadge(_key: string, _content: string | undefined): void {
+			// Badge not supported in RPC mode
+		},
+
 		pasteToEditor(text: string): void {
 			// Paste handling not supported in RPC mode - falls back to setEditorText
 			this.setEditorText(text);

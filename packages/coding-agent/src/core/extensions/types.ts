@@ -169,6 +169,13 @@ export interface ExtensionUIContext {
 		},
 	): Promise<T>;
 
+	/**
+	 * Set a badge on the editor's bottom border (right-aligned).
+	 * Pass undefined as content to remove the badge.
+	 * Content should be a pre-styled string (use theme.fg() etc.).
+	 */
+	setEditorBadge(key: string, content: string | undefined): void;
+
 	/** Paste text into the editor, triggering paste handling (collapse for large content). */
 	pasteToEditor(text: string): void;
 
