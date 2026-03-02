@@ -2,7 +2,7 @@
  * Diff Extension
  *
  * /diff command shows modified/deleted/new files from git status and opens
- * the selected file in VS Code's diff view.
+ * the selected file with the system default application.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -17,7 +17,7 @@ interface FileInfo {
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("diff", {
-		description: "Show git changes and open in VS Code diff view",
+		description: "Show git changes and open selected file",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("No UI available", "error");
@@ -68,19 +68,7 @@ export default function (pi: ExtensionAPI) {
 
 			const openSelected = async (fileInfo: FileInfo): Promise<void> => {
 				try {
-					// Open in VS Code diff view.
-					// For untracked files, git difftool won't work, so fall back to just opening the file.
-					if (fileInfo.status === "?") {
-						await pi.exec("code", ["-g", fileInfo.file], { cwd: ctx.cwd });
-						return;
-					}
-
-					const diffResult = await pi.exec("git", ["difftool", "-y", "--tool=vscode", fileInfo.file], {
-						cwd: ctx.cwd,
-					});
-					if (diffResult.code !== 0) {
-						await pi.exec("code", ["-g", fileInfo.file], { cwd: ctx.cwd });
-					}
+					await pi.exec("open", [fileInfo.file], { cwd: ctx.cwd });
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					ctx.ui.notify(`Failed to open ${fileInfo.file}: ${message}`, "error");
