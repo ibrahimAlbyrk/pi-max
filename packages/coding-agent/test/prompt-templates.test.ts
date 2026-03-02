@@ -8,8 +8,17 @@
  * - Edge cases and integration between parsing and substitution
  */
 
-import { describe, expect, test } from "vitest";
-import { parseCommandArgs, substituteArgs } from "../src/core/prompt-templates.js";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import {
+	expandPromptTemplate,
+	loadPromptTemplates,
+	type PromptTemplate,
+	parseCommandArgs,
+	substituteArgs,
+} from "../src/core/prompt-templates.js";
 
 // ============================================================================
 // substituteArgs
@@ -377,5 +386,201 @@ describe("parseCommandArgs + substituteArgs integration", () => {
 		const template1 = "Implement: $@";
 		const template2 = "Implement: $ARGUMENTS";
 		expect(substituteArgs(template1, args)).toBe(substituteArgs(template2, args));
+	});
+});
+
+// ============================================================================
+// expandPromptTemplate - Colon Separator for Nested Prompts
+// ============================================================================
+
+describe("expandPromptTemplate - colon separator", () => {
+	const templates: PromptTemplate[] = [
+		{
+			name: "review",
+			description: "Review code",
+			content: "Review this code: $@",
+			source: "project",
+			filePath: "/prompts/review.md",
+		},
+		{
+			name: "git/commit",
+			description: "Git commit",
+			content: "Write a commit message for: $@",
+			source: "project",
+			filePath: "/prompts/git/commit.md",
+		},
+		{
+			name: "git/hooks/pre-push",
+			description: "Pre-push hook",
+			content: "Create a pre-push hook for: $1",
+			source: "project",
+			filePath: "/prompts/git/hooks/pre-push.md",
+		},
+	];
+
+	test("should expand flat prompts as before", () => {
+		expect(expandPromptTemplate("/review my code", templates)).toBe("Review this code: my code");
+	});
+
+	test("should expand nested prompts using colon separator", () => {
+		expect(expandPromptTemplate("/git:commit fix login bug", templates)).toBe(
+			"Write a commit message for: fix login bug",
+		);
+	});
+
+	test("should expand deeply nested prompts using colon separator", () => {
+		expect(expandPromptTemplate("/git:hooks:pre-push tests", templates)).toBe("Create a pre-push hook for: tests");
+	});
+
+	test("should return original text if no template matches", () => {
+		expect(expandPromptTemplate("/unknown:command", templates)).toBe("/unknown:command");
+	});
+
+	test("should not expand text that doesn't start with /", () => {
+		expect(expandPromptTemplate("git:commit test", templates)).toBe("git:commit test");
+	});
+
+	test("should handle nested prompt with no arguments", () => {
+		expect(expandPromptTemplate("/git:commit", templates)).toBe("Write a commit message for: ");
+	});
+});
+
+// ============================================================================
+// expandPromptTemplate - Auto-append args when no placeholders
+// ============================================================================
+
+describe("expandPromptTemplate - auto-append args", () => {
+	const templates: PromptTemplate[] = [
+		{
+			name: "no-placeholder",
+			description: "No placeholder",
+			content: "Do something useful",
+			source: "project",
+			filePath: "/prompts/no-placeholder.md",
+		},
+		{
+			name: "has-positional",
+			description: "Has $1",
+			content: "Run $1 now",
+			source: "project",
+			filePath: "/prompts/has-positional.md",
+		},
+		{
+			name: "has-wildcard",
+			description: "Has $@",
+			content: "Process: $@",
+			source: "project",
+			filePath: "/prompts/has-wildcard.md",
+		},
+		{
+			name: "has-arguments",
+			description: "Has $ARGUMENTS",
+			content: "Handle $ARGUMENTS",
+			source: "project",
+			filePath: "/prompts/has-arguments.md",
+		},
+		{
+			name: "has-slice",
+			description: "Has slice",
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: this is a prompt template placeholder, not a JS template literal
+			content: "Slice: ${@:2}",
+			source: "project",
+			filePath: "/prompts/has-slice.md",
+		},
+	];
+
+	test("should append args when template has no placeholders", () => {
+		expect(expandPromptTemplate("/no-placeholder extra context here", templates)).toBe(
+			"Do something useful\n\nextra context here",
+		);
+	});
+
+	test("should not append args when template has $1", () => {
+		expect(expandPromptTemplate("/has-positional test", templates)).toBe("Run test now");
+	});
+
+	test("should not append args when template has $@", () => {
+		expect(expandPromptTemplate("/has-wildcard a b c", templates)).toBe("Process: a b c");
+	});
+
+	test("should not append args when template has $ARGUMENTS", () => {
+		expect(expandPromptTemplate("/has-arguments x y", templates)).toBe("Handle x y");
+	});
+
+	// biome-ignore lint/suspicious/noTemplateCurlyInString: this is a prompt template placeholder, not a JS template literal
+	test("should not append args when template has ${@:...}", () => {
+		expect(expandPromptTemplate("/has-slice a b c", templates)).toBe("Slice: b c");
+	});
+
+	test("should not append when no args provided", () => {
+		expect(expandPromptTemplate("/no-placeholder", templates)).toBe("Do something useful");
+	});
+
+	test("should handle quoted args in append", () => {
+		expect(expandPromptTemplate('/no-placeholder "only staged changes"', templates)).toBe(
+			"Do something useful\n\nonly staged changes",
+		);
+	});
+});
+
+// ============================================================================
+// loadPromptTemplates - Recursive Directory Loading
+// ============================================================================
+
+describe("loadPromptTemplates - recursive directory loading", () => {
+	const testDir = join(tmpdir(), `pi-prompt-test-${Date.now()}`);
+	const promptsDir = join(testDir, ".pi", "prompts");
+
+	beforeAll(() => {
+		// Create nested directory structure
+		mkdirSync(join(promptsDir, "git", "hooks"), { recursive: true });
+		mkdirSync(join(promptsDir, "docker"), { recursive: true });
+
+		// Create template files
+		writeFileSync(join(promptsDir, "review.md"), "---\ndescription: Review code\n---\nReview this code");
+		writeFileSync(join(promptsDir, "git", "commit.md"), "---\ndescription: Git commit\n---\nWrite a commit message");
+		writeFileSync(
+			join(promptsDir, "git", "hooks", "pre-push.md"),
+			"---\ndescription: Pre-push hook\n---\nCreate pre-push hook",
+		);
+		writeFileSync(join(promptsDir, "docker", "build.md"), "---\ndescription: Docker build\n---\nBuild docker image");
+	});
+
+	afterAll(() => {
+		rmSync(testDir, { recursive: true, force: true });
+	});
+
+	test("should load flat templates with plain name", () => {
+		const templates = loadPromptTemplates({ cwd: testDir, promptPaths: [promptsDir], includeDefaults: false });
+		const review = templates.find((t) => t.name === "review");
+		expect(review).toBeDefined();
+		expect(review!.content).toContain("Review this code");
+	});
+
+	test("should load nested templates with slash-separated name", () => {
+		const templates = loadPromptTemplates({ cwd: testDir, promptPaths: [promptsDir], includeDefaults: false });
+		const gitCommit = templates.find((t) => t.name === "git/commit");
+		expect(gitCommit).toBeDefined();
+		expect(gitCommit!.content).toContain("Write a commit message");
+	});
+
+	test("should load deeply nested templates", () => {
+		const templates = loadPromptTemplates({ cwd: testDir, promptPaths: [promptsDir], includeDefaults: false });
+		const prePush = templates.find((t) => t.name === "git/hooks/pre-push");
+		expect(prePush).toBeDefined();
+		expect(prePush!.content).toContain("Create pre-push hook");
+	});
+
+	test("should load templates from multiple subdirectories", () => {
+		const templates = loadPromptTemplates({ cwd: testDir, promptPaths: [promptsDir], includeDefaults: false });
+		const dockerBuild = templates.find((t) => t.name === "docker/build");
+		expect(dockerBuild).toBeDefined();
+		expect(dockerBuild!.content).toContain("Build docker image");
+	});
+
+	test("should load all templates (flat + nested)", () => {
+		const templates = loadPromptTemplates({ cwd: testDir, promptPaths: [promptsDir], includeDefaults: false });
+		const names = templates.map((t) => t.name).sort();
+		expect(names).toEqual(["docker/build", "git/commit", "git/hooks/pre-push", "review"]);
 	});
 });

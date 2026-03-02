@@ -329,12 +329,15 @@ function collectAncestorAgentsSkillDirs(startDir: string): string[] {
 	return skillDirs;
 }
 
-function collectAutoPromptEntries(dir: string): string[] {
+function collectAutoPromptEntries(dir: string, rootDir?: string, ig?: ReturnType<typeof ignore>): string[] {
 	const entries: string[] = [];
 	if (!existsSync(dir)) return entries;
 
-	const ig = ignore();
-	addIgnoreRules(ig, dir, dir);
+	const resolvedRoot = rootDir ?? dir;
+	if (!ig) {
+		ig = ignore();
+		addIgnoreRules(ig, resolvedRoot, resolvedRoot);
+	}
 
 	try {
 		const dirEntries = readdirSync(dir, { withFileTypes: true });
@@ -344,19 +347,24 @@ function collectAutoPromptEntries(dir: string): string[] {
 
 			const fullPath = join(dir, entry.name);
 			let isFile = entry.isFile();
+			let isDirectory = entry.isDirectory();
 			if (entry.isSymbolicLink()) {
 				try {
-					isFile = statSync(fullPath).isFile();
+					const stats = statSync(fullPath);
+					isFile = stats.isFile();
+					isDirectory = stats.isDirectory();
 				} catch {
 					continue;
 				}
 			}
 
-			const relPath = toPosixPath(relative(dir, fullPath));
+			const relPath = toPosixPath(relative(resolvedRoot, fullPath));
 			if (ig.ignores(relPath)) continue;
 
 			if (isFile && entry.name.endsWith(".md")) {
 				entries.push(fullPath);
+			} else if (isDirectory) {
+				entries.push(...collectAutoPromptEntries(fullPath, resolvedRoot, ig));
 			}
 		}
 	} catch {

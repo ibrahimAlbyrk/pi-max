@@ -1870,7 +1870,7 @@ export class AgentSession {
 				}));
 
 			const templates: SlashCommandInfo[] = this.promptTemplates.map((template) => ({
-				name: template.name,
+				name: template.name.replace(/\//g, ":"),
 				description: template.description,
 				source: "prompt",
 				location: normalizeLocation(template.source),

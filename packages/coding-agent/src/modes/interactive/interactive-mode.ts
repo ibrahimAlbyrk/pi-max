@@ -327,8 +327,9 @@ export class InteractiveMode {
 		}
 
 		// Convert prompt templates to SlashCommand format for autocomplete
+		// Use colon separator for nested prompts (e.g., "git/commit" → "git:commit")
 		const templateCommands: SlashCommand[] = this.session.promptTemplates.map((cmd) => ({
-			name: cmd.name,
+			name: cmd.name.replace(/\//g, ":"),
 			description: cmd.description,
 		}));
 
@@ -915,11 +916,11 @@ export class InteractiveMode {
 				const templateList = this.formatScopeGroups(groups, {
 					formatPath: (p) => {
 						const template = templateByPath.get(p);
-						return template ? `/${template.name}` : this.formatDisplayPath(p);
+						return template ? `/${template.name.replace(/\//g, ":")}` : this.formatDisplayPath(p);
 					},
 					formatPackagePath: (p) => {
 						const template = templateByPath.get(p);
-						return template ? `/${template.name}` : this.formatDisplayPath(p);
+						return template ? `/${template.name.replace(/\//g, ":")}` : this.formatDisplayPath(p);
 					},
 				});
 				this.chatContainer.addChild(new Text(`${sectionHeader("Prompts")}\n${templateList}`, 0, 0));

@@ -61,7 +61,27 @@ Create a React component named $1 with features: $@
 
 Usage: `/component Button "onClick handler" "disabled support"`
 
+## Nested Directories
+
+Template discovery in `prompts/` is recursive. Subdirectory names become part of the command using `:` as separator.
+
+```
+prompts/
+  review.md          → /review
+  git/
+    commit.md        → /git:commit
+    hooks/
+      pre-push.md    → /git:hooks:pre-push
+```
+
+Usage:
+
+```
+/git:commit              # Expands prompts/git/commit.md
+/git:hooks:pre-push      # Expands prompts/git/hooks/pre-push.md
+```
+
 ## Loading Rules
 
-- Template discovery in `prompts/` is non-recursive.
-- If you want templates in subdirectories, add them explicitly via `prompts` settings or a package manifest.
+- Template discovery in `prompts/` is recursive — subdirectories are automatically scanned.
+- Nested templates use `:` as a path separator in their command names.

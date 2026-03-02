@@ -99,12 +99,17 @@ export function substituteArgs(content: string, args: string[]): string {
 	return result;
 }
 
-function loadTemplateFromFile(filePath: string, source: string, sourceLabel: string): PromptTemplate | null {
+function loadTemplateFromFile(
+	filePath: string,
+	source: string,
+	sourceLabel: string,
+	nameOverride?: string,
+): PromptTemplate | null {
 	try {
 		const rawContent = readFileSync(filePath, "utf-8");
 		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(rawContent);
 
-		const name = basename(filePath).replace(/\.md$/, "");
+		const name = nameOverride ?? basename(filePath).replace(/\.md$/, "");
 
 		// Get description from frontmatter or first non-empty line
 		let description = frontmatter.description || "";
@@ -133,9 +138,11 @@ function loadTemplateFromFile(filePath: string, source: string, sourceLabel: str
 }
 
 /**
- * Scan a directory for .md files (non-recursive) and load them as prompt templates.
+ * Scan a directory recursively for .md files and load them as prompt templates.
+ * Subdirectory names become part of the template name using "/" as separator.
+ * Example: prompts/git/commit.md → name: "git/commit"
  */
-function loadTemplatesFromDir(dir: string, source: string, sourceLabel: string): PromptTemplate[] {
+function loadTemplatesFromDir(dir: string, source: string, sourceLabel: string, prefix: string = ""): PromptTemplate[] {
 	const templates: PromptTemplate[] = [];
 
 	if (!existsSync(dir)) {
@@ -148,12 +155,14 @@ function loadTemplatesFromDir(dir: string, source: string, sourceLabel: string):
 		for (const entry of entries) {
 			const fullPath = join(dir, entry.name);
 
-			// For symlinks, check if they point to a file
+			// For symlinks, resolve actual type
 			let isFile = entry.isFile();
+			let isDirectory = entry.isDirectory();
 			if (entry.isSymbolicLink()) {
 				try {
 					const stats = statSync(fullPath);
 					isFile = stats.isFile();
+					isDirectory = stats.isDirectory();
 				} catch {
 					// Broken symlink, skip it
 					continue;
@@ -161,10 +170,16 @@ function loadTemplatesFromDir(dir: string, source: string, sourceLabel: string):
 			}
 
 			if (isFile && entry.name.endsWith(".md")) {
-				const template = loadTemplateFromFile(fullPath, source, sourceLabel);
+				const baseName = entry.name.replace(/\.md$/, "");
+				const templateName = prefix ? `${prefix}/${baseName}` : undefined;
+				const template = loadTemplateFromFile(fullPath, source, sourceLabel, templateName);
 				if (template) {
 					templates.push(template);
 				}
+			} else if (isDirectory) {
+				// Recurse into subdirectory with updated prefix
+				const subPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+				templates.push(...loadTemplatesFromDir(fullPath, source, sourceLabel, subPrefix));
 			}
 		}
 	} catch {
@@ -252,6 +267,26 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): P
 		return { source: "path", label: buildPathSourceLabel(resolvedPath) };
 	};
 
+	/**
+	 * Derive a nested template name from a file path relative to a known prompts root.
+	 * e.g. /home/user/.pi/agent/prompts/git/commit.md → "git/commit"
+	 * Returns undefined if the file is directly in a prompts root (no nesting).
+	 */
+	const deriveNestedName = (filePath: string): string | undefined => {
+		const roots = [userPromptsDir, projectPromptsDir];
+		for (const root of roots) {
+			if (isUnderPath(filePath, root)) {
+				const rel = filePath.slice(resolve(root).length + 1).replace(/\.md$/, "");
+				// Only return if there's actual nesting (contains path separator)
+				if (rel.includes(sep) || rel.includes("/")) {
+					// Normalize to forward slashes
+					return rel.split(sep).join("/");
+				}
+			}
+		}
+		return undefined;
+	};
+
 	// 3. Load explicit prompt paths
 	for (const rawPath of promptPaths) {
 		const resolvedPath = resolvePromptPath(rawPath, resolvedCwd);
@@ -265,7 +300,8 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): P
 			if (stats.isDirectory()) {
 				templates.push(...loadTemplatesFromDir(resolvedPath, source, label));
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
-				const template = loadTemplateFromFile(resolvedPath, source, label);
+				const nestedName = deriveNestedName(resolvedPath);
+				const template = loadTemplateFromFile(resolvedPath, source, label, nestedName);
 				if (template) {
 					templates.push(template);
 				}
@@ -278,21 +314,37 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): P
 	return templates;
 }
 
+/** Check whether a template body contains any argument placeholders */
+const HAS_ARG_PLACEHOLDER = /\$(\d+|@|ARGUMENTS|\{@:[^}]+\})/;
+
 /**
  * Expand a prompt template if it matches a template name.
  * Returns the expanded content or the original text if not a template.
+ *
+ * If the template contains no argument placeholders ($1, $@, $ARGUMENTS, ${@:...})
+ * and the user provided arguments, they are appended to the end of the content.
  */
 export function expandPromptTemplate(text: string, templates: PromptTemplate[]): string {
 	if (!text.startsWith("/")) return text;
 
 	const spaceIndex = text.indexOf(" ");
-	const templateName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+	const rawName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 	const argsString = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1);
+
+	// Convert colon separator to slash for nested prompts (e.g., "git:commit" → "git/commit")
+	const templateName = rawName.replace(/:/g, "/");
 
 	const template = templates.find((t) => t.name === templateName);
 	if (template) {
 		const args = parseCommandArgs(argsString);
-		return substituteArgs(template.content, args);
+		const expanded = substituteArgs(template.content, args);
+
+		// If the template has no placeholders but the user provided args, append them
+		if (args.length > 0 && !HAS_ARG_PLACEHOLDER.test(template.content)) {
+			return `${expanded}\n\n${args.join(" ")}`;
+		}
+
+		return expanded;
 	}
 
 	return text;
