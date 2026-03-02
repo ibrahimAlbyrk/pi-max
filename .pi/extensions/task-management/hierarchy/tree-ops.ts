@@ -145,7 +145,6 @@ function renderNode(store: TaskStore, task: typeof store.tasks[0], lines: string
 
 	const children = store.tasks.filter((t) => t.parentId === task.id);
 	const hasChildren = children.length > 0;
-	const folderIcon = hasChildren ? "📁 " : "";
 
 	// Group containers show ⟳ prefix on status and (done/total) counter
 	let statusText: string;
@@ -156,7 +155,7 @@ function renderNode(store: TaskStore, task: typeof store.tasks[0], lines: string
 		statusText = task.status;
 	}
 
-	lines.push(`${prefix}${connector}${folderIcon}${statusIcon} #${task.id} [${pri}] ${task.title}  ${statusText}`);
+	lines.push(`${prefix}${connector}${statusIcon} #${task.id} [${pri}] ${task.title}  ${statusText}`);
 
 	const childPrefix = prefix + (prefix === "" ? "" : isLast ? "    " : "│   ");
 	for (let i = 0; i < children.length; i++) {

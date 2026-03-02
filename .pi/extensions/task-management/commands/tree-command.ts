@@ -52,7 +52,6 @@ class TreeOverlay {
 
 		const children = store.tasks.filter((t) => t.parentId === task.id);
 		const isGroup = children.length > 0;
-		const folder = isGroup ? "📁 " : "   ";
 		const id = th.fg("accent", `#${task.id}`);
 		const pri = th.fg(PRIORITY_COLORS[task.priority] as any, `[${priorityLabel(task.priority)}]`);
 		const title = task.status === "done" ? th.fg("dim", task.title) : th.fg("text", task.title);
@@ -66,7 +65,7 @@ class TreeOverlay {
 			status = th.fg("dim", task.status);
 		}
 
-		const line = `${prefix}${connector}${folder}${statusIcon} ${id} ${pri} ${title}  ${status}`;
+		const line = `${prefix}${connector}${statusIcon} ${id} ${pri} ${title}  ${status}`;
 		this.lines.push({ text: line, taskId: task.id, depth });
 
 		const childPrefix = prefix + (depth === 0 ? "" : isLast ? "    " : "│   ");

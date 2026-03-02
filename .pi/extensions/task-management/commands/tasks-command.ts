@@ -235,8 +235,6 @@ class TaskListOverlay {
 			: task.status === "in_progress" ? th.fg("accent", icon)
 			: th.fg("dim", icon);
 
-		// Group containers get 📁 folder icon prefix
-		const folder = isGroup ? th.fg("muted", "📁 ") : "";
 		const id = th.fg("accent", `#${task.id}`);
 		const pri = th.fg(PRIORITY_COLORS[task.priority] as any, `[${priorityLabel(task.priority)}]`);
 		const title = task.status === "done" ? th.fg("dim", task.title) : th.fg("text", task.title);
@@ -254,9 +252,10 @@ class TaskListOverlay {
 			extra = th.fg("dim", ` (${task.actualMinutes}m)`);
 		}
 
-		const prefix = isSelected ? th.fg("accent", "▸") : " ";
-		const indent = depth > 0 ? th.fg("borderMuted", "  ".repeat(depth - 1) + "└ ") : "";
-		const raw = `${prefix} ${indent}${folder}${statusIcon} ${id} ${pri} ${title}${extra}`;
+		const baseIndent = "    ".repeat(depth);
+		const selectionIndicator = isSelected ? th.fg("accent", "▸ ") : "  ";
+		const connector = depth > 0 ? th.fg("borderMuted", "└ ") : "";
+		const raw = `${baseIndent}${selectionIndicator}${connector}${statusIcon} ${id} ${pri} ${title}${extra}`;
 		return this.padInner(truncateToWidth(raw, innerWidth), innerWidth);
 	}
 
