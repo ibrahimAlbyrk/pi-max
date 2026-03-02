@@ -94,6 +94,7 @@ import { ScopedModelsSelectorComponent } from "./components/scoped-models-select
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.js";
+import { TemplateInvocationMessageComponent } from "./components/template-invocation-message.js";
 import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
@@ -2435,6 +2436,21 @@ export class InteractiveMode {
 							);
 							this.chatContainer.addChild(userComponent);
 						}
+					} else if (
+						"originalCommand" in message &&
+						message.originalCommand &&
+						typeof message.originalCommand === "string" &&
+						message.originalCommand !== textContent
+					) {
+						// Render template invocation (collapsible)
+						this.chatContainer.addChild(new Spacer(1));
+						const component = new TemplateInvocationMessageComponent(
+							message.originalCommand,
+							textContent,
+							this.getMarkdownThemeWithSettings(),
+						);
+						component.setExpanded(this.toolOutputExpanded);
+						this.chatContainer.addChild(component);
 					} else {
 						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings());
 						this.chatContainer.addChild(userComponent);
