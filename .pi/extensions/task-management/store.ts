@@ -41,6 +41,9 @@ export function createTask(
 		completedAt: null,
 		createdAt: new Date().toISOString(),
 		assignee: partial.assignee ?? null,
+		agentId: partial.agentId ?? null,
+		agentName: partial.agentName ?? null,
+		agentColor: partial.agentColor ?? null,
 	};
 }
 
@@ -158,6 +161,39 @@ export function recomputeAllParentStatuses(store: TaskStore): void {
 			}
 		}
 	}
+}
+
+// ─── Agent Assignment ────────────────────────────────────────────
+
+export interface AgentAssignment {
+	agentId: string;
+	agentName: string;
+	agentColor: string;
+}
+
+/**
+ * Assign an agent to a task. Sets assignee to "agent" and stores agent details.
+ */
+export function assignAgentToTask(store: TaskStore, taskId: number, agent: AgentAssignment): boolean {
+	const task = findTask(store, taskId);
+	if (!task) return false;
+	task.assignee = "agent";
+	task.agentId = agent.agentId;
+	task.agentName = agent.agentName;
+	task.agentColor = agent.agentColor;
+	return true;
+}
+
+/**
+ * Remove agent assignment from a task. Keeps assignee as "agent" for historical record.
+ */
+export function unassignAgentFromTask(store: TaskStore, taskId: number): boolean {
+	const task = findTask(store, taskId);
+	if (!task) return false;
+	task.agentId = null;
+	task.agentName = null;
+	task.agentColor = null;
+	return true;
 }
 
 // ─── Filtering ───────────────────────────────────────────────────

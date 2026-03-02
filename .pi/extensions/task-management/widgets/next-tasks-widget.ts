@@ -18,6 +18,57 @@ import { isGroupContainer } from "../store.js";
 import { PRIORITY_COLORS, priorityLabel } from "../rendering/icons.js";
 import { truncate, PRIORITY_ORDER } from "../ui/helpers.js";
 
+// ── Agent color helper ──
+const ANSI_RESET = "\x1b[0m";
+
+function hexToAnsiFg(hex: string): string {
+	const r = parseInt(hex.slice(1, 3), 16);
+	const g = parseInt(hex.slice(3, 5), 16);
+	const b = parseInt(hex.slice(5, 7), 16);
+	return `\x1b[38;2;${r};${g};${b}m`;
+}
+
+// ── Agent tag pulse/breathe animation config ──
+const PULSE_CYCLE_MS = 2500;      // 2.5s full cycle
+const PULSE_DIM = 0.35;           // dim to 65% brightness at lowest
+const PULSE_BRIGHT = 0.5;         // brighten 50% towards white at peak
+
+/** Parse hex color string "#RRGGBB" to RGB. */
+function parseHexRgb(hex: string): RGB {
+	const r = parseInt(hex.slice(1, 3), 16);
+	const g = parseInt(hex.slice(3, 5), 16);
+	const b = parseInt(hex.slice(5, 7), 16);
+	if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return { r: 180, g: 180, b: 180 };
+	return { r, g, b };
+}
+
+/** Dim a color by scaling RGB values. factor 0–1 (0=black, 1=original). */
+function dimColor(c: RGB, factor: number): RGB {
+	return { r: c.r * factor, g: c.g * factor, b: c.b * factor };
+}
+
+/**
+ * Apply soft pulse/breathe effect to the agent tag.
+ * Uses a sine wave for smooth dim↔bright oscillation.
+ * Creates a dramatic enough range to be clearly visible on dark terminals.
+ */
+function applyPulse(text: string, hexColor: string): string {
+	const baseRgb = parseHexRgb(hexColor);
+	const now = Date.now();
+	const phase = (now % PULSE_CYCLE_MS) / PULSE_CYCLE_MS;
+	const t = (Math.sin(phase * Math.PI * 2) + 1) / 2; // 0–1, smooth
+
+	// Interpolate between dimmed color and brightened color
+	const dimmed = dimColor(baseRgb, 1 - PULSE_DIM);     // 65% brightness
+	const bright = lerpToWhite(baseRgb, PULSE_BRIGHT);    // 50% towards white
+	const pulsedColor: RGB = {
+		r: dimmed.r + t * (bright.r - dimmed.r),
+		g: dimmed.g + t * (bright.g - dimmed.g),
+		b: dimmed.b + t * (bright.b - dimmed.b),
+	};
+	return `${rgbToAnsi(pulsedColor)}${text}${RESET}`;
+}
+
 // ── Shine animation config (matches subagent-system agent-panel) ──
 const SHINE_CYCLE_MS = 2000;
 const SHINE_WIDTH = 8;
@@ -119,6 +170,16 @@ function applyFade(line: string, fadeIndex: number): string {
 
 function stripAnsi(str: string): string {
 	return str.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+/**
+ * Render agent assignment tag for a task.
+ * Returns colored " @AgentName" with pulse/breathe animation if color is available.
+ */
+function renderAgentTag(task: Task): string {
+	if (!task.agentName) return "";
+	if (!task.agentColor) return `  @${task.agentName}`;
+	return `  ${applyPulse(`@${task.agentName}`, task.agentColor)}`;
 }
 
 interface TaskAnimationState {
@@ -273,7 +334,8 @@ class NextTasksComponent implements Component {
 
 	private updateAnimationState(): void {
 		const hasInProgress = this.store.tasks.some((t) => t.status === "in_progress");
-		if (hasInProgress) {
+		const hasAgentTag = this.store.tasks.some((t) => t.agentName && t.agentColor);
+		if (hasInProgress || hasAgentTag) {
 			this.startShine();
 		} else {
 			this.stopShine();
@@ -384,7 +446,9 @@ class NextTasksComponent implements Component {
 		}
 
 		// ── Build task lines ──
-		const taskLines: string[] = [];
+		// Each entry is { content, agentTag } — agent tag is kept separate
+		// so it survives the fade effect (applyFade strips ANSI from content).
+		const taskLines: { content: string; agentTag: string }[] = [];
 
 		for (let idx = 0; idx < visibleInProgress.length; idx++) {
 			const t = visibleInProgress[idx];
@@ -397,7 +461,7 @@ class NextTasksComponent implements Component {
 
 			const baseContent = `${icon} ${id} ${pri} ${shineTitle}`;
 			const animatedContent = this.renderTaskLineWithAnimation(baseContent, t.id);
-			if (animatedContent) taskLines.push(animatedContent);
+			if (animatedContent) taskLines.push({ content: animatedContent, agentTag: renderAgentTag(t) });
 		}
 
 		for (const t of visibleTodo) {
@@ -408,7 +472,7 @@ class NextTasksComponent implements Component {
 
 			const baseContent = `${icon} ${id} ${pri} ${title}`;
 			const animatedContent = this.renderTaskLineWithAnimation(baseContent, t.id);
-			if (animatedContent) taskLines.push(animatedContent);
+			if (animatedContent) taskLines.push({ content: animatedContent, agentTag: renderAgentTag(t) });
 		}
 
 		for (const t of doneTasks) {
@@ -418,7 +482,7 @@ class NextTasksComponent implements Component {
 
 			const baseContent = `${icon} ${id}   ${title}`;
 			const animatedContent = this.renderTaskLineWithAnimation(baseContent, t.id);
-			if (animatedContent) taskLines.push(animatedContent);
+			if (animatedContent) taskLines.push({ content: animatedContent, agentTag: renderAgentTag(t) });
 		}
 
 		if (taskLines.length === 0) return [];
@@ -438,7 +502,7 @@ class NextTasksComponent implements Component {
 			lines.push(
 				th.fg("borderMuted", "  ── ") +
 				collapseIndicator +
-				taskLines[0],
+				taskLines[0].content + taskLines[0].agentTag,
 			);
 			return lines;
 		}
@@ -473,12 +537,14 @@ class NextTasksComponent implements Component {
 		const linesToShow = taskLines.slice(0, visibleCount);
 
 		// Apply subtle downward fade: last 3 lines get progressively dimmer
+		// Agent tags are appended AFTER fade to preserve their color.
 		const fadeCount = 3;
 		const fadeStart = Math.max(0, linesToShow.length - fadeCount);
 		for (let i = 0; i < linesToShow.length; i++) {
+			const { content, agentTag } = linesToShow[i];
 			const fadeIndex = i >= fadeStart ? i - fadeStart + 1 : 0;
-			const line = fadeIndex > 0 ? applyFade(linesToShow[i], fadeIndex) : linesToShow[i];
-			lines.push(th.fg("borderMuted", "  │ ") + line);
+			const fadedContent = fadeIndex > 0 ? applyFade(content, fadeIndex) : content;
+			lines.push(th.fg("borderMuted", "  │ ") + fadedContent + agentTag);
 		}
 
 		if (overflowLine && !isTransitioning) {

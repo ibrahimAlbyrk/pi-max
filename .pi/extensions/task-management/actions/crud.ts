@@ -65,7 +65,11 @@ export function handleGet(store: TaskStore, params: TaskActionParams): TaskToolR
 	lines.push(`Status: ${task.status} | Priority: ${task.priority}`);
 	if (task.description) lines.push(`Description: ${task.description}`);
 	if (task.tags.length > 0) lines.push(`Tags: ${task.tags.join(", ")}`);
-	if (task.assignee) lines.push(`Assignee: ${task.assignee}`);
+	if (task.assignee) {
+		let assigneeStr = task.assignee;
+		if (task.agentName) assigneeStr += ` (@${task.agentName})`;
+		lines.push(`Assignee: ${assigneeStr}`);
+	}
 	if (task.parentId !== null) lines.push(`Parent: #${task.parentId}`);
 	if (task.dependsOn.length > 0) lines.push(`Depends on: ${task.dependsOn.map((d) => `#${d}`).join(", ")}`);
 	if (task.estimatedMinutes !== null) lines.push(`Estimated: ${task.estimatedMinutes}m`);

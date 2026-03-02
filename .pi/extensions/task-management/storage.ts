@@ -426,6 +426,8 @@ export class PerFileTaskStorage implements TaskStorage {
 				assignee: task.assignee,
 				parentId: task.parentId,
 				sprintId: task.sprintId,
+				agentName: task.agentName ?? null,
+				agentColor: task.agentColor ?? null,
 			};
 		}
 

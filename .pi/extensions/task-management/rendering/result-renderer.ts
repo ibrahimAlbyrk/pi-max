@@ -165,6 +165,13 @@ function renderTaskLine(t: Task, theme: Theme): string {
 
 	let line = `${statusIcon} ${id} ${pri} ${title}`;
 
+	if (t.agentName) {
+		const agentColor = t.agentColor
+			? `\x1b[38;2;${parseInt(t.agentColor.slice(1, 3), 16)};${parseInt(t.agentColor.slice(3, 5), 16)};${parseInt(t.agentColor.slice(5, 7), 16)}m`
+			: "";
+		line += ` ${agentColor}@${t.agentName}\x1b[0m`;
+	}
+
 	if (t.status === "in_progress" && t.startedAt) {
 		const elapsed = Date.now() - new Date(t.startedAt).getTime();
 		line += ` ${theme.fg("dim", `(${formatElapsed(elapsed)})`)}`;

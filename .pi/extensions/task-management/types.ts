@@ -41,6 +41,11 @@ export interface Task {
 	completedAt: string | null; // ISO 8601
 	createdAt: string; // ISO 8601
 	assignee: "user" | "agent" | null;
+
+	// ─── Agent Assignment (cross-extension, set by subagent system) ──
+	agentId: string | null;
+	agentName: string | null;
+	agentColor: string | null;
 }
 
 // ─── Sprint (Phase 3 — stored now, logic later) ─────────────────
@@ -76,6 +81,8 @@ export interface TaskIndexEntry {
 	assignee: "user" | "agent" | null;
 	parentId: number | null;
 	sprintId: number | null;
+	agentName: string | null;
+	agentColor: string | null;
 }
 
 export interface SprintIndexEntry {

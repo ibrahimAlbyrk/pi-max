@@ -17,7 +17,8 @@ import { Type } from "@sinclair/typebox";
 import { Key } from "@mariozechner/pi-tui";
 
 import type { TaskStore, TaskActionParams, TaskToolResult } from "./types.js";
-import { createDefaultStore, createTask, createLightSnapshot, findTask, recalculateNextIds } from "./store.js";
+import { createDefaultStore, createTask, createLightSnapshot, findTask, recalculateNextIds, assignAgentToTask, unassignAgentFromTask } from "./store.js";
+import type { AgentAssignment } from "./store.js";
 import { PerFileTaskStorage, type TaskStorage } from "./storage.js";
 import { persistToStorage } from "./state.js";
 
@@ -198,6 +199,30 @@ export default function taskManagementExtension(pi: ExtensionAPI) {
 	registerSessionHooks(pi, sharedContext);  // session lifecycle
 	registerAutomationHooks(pi, sharedContext); // file tracking, auto-start, test detect, auto-notes, plan mode
 	registerIntelligenceHooks(pi, sharedContext); // context injection, compaction safety
+
+	// ─── Cross-Extension: Agent Assignment Events ───────────────
+	//
+	// The subagent system emits these events when agents are spawned
+	// with taskIds. This allows zero-coupling agent↔task linking.
+	// Widget refresh is handled by the turn_end hook (session-hooks.ts),
+	// not here — calling refreshWidgets during tool execution can
+	// interfere with the TUI rendering cycle.
+
+	pi.events.on("subagent:tasks-assigned", (data: { taskIds: number[]; agent: AgentAssignment }) => {
+		for (const taskId of data.taskIds) {
+			assignAgentToTask(store, taskId, data.agent);
+		}
+		saveToFile();
+	});
+
+	pi.events.on("subagent:tasks-unassigned", (data: { agentId: string }) => {
+		for (const task of store.tasks) {
+			if (task.agentId === data.agentId) {
+				unassignAgentFromTask(store, task.id);
+			}
+		}
+		saveToFile();
+	});
 
 	// ─── Tool Schema ─────────────────────────────────────────────
 
