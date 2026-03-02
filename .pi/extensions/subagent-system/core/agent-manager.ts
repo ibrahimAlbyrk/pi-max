@@ -74,6 +74,8 @@ export class AgentManager {
   private destroying = false;
   /** Maps agent ID → assigned task IDs (for cross-extension event emission) */
   private agentTaskIds = new Map<string, number[]>();
+  /** Cached raw awareness prompt template (read once from .md file) */
+  private awarenessPromptCache: string | null = null;
 
 
 
@@ -143,6 +145,31 @@ export class AgentManager {
     });
   }
 
+  // ─── Subagent Awareness ─────────────────────────────────────────
+
+  /**
+   * Load and interpolate the subagent awareness prompt template.
+   * Template is read once from disk and cached; placeholders are
+   * replaced per-agent at spawn time.
+   */
+  private getAwarenessPrompt(agentId: string, agentType: string): string {
+    if (this.awarenessPromptCache === null) {
+      try {
+        const promptPath = join(
+          this.cwd, ".pi", "extensions", "subagent-system",
+          "prompts", "subagent-awareness.prompt.md",
+        );
+        this.awarenessPromptCache = readFileSync(promptPath, "utf-8");
+      } catch {
+        this.awarenessPromptCache = "";
+      }
+    }
+    if (!this.awarenessPromptCache) return "";
+    return "\n\n" + this.awarenessPromptCache
+      .replace(/\{\{agentId\}\}/g, agentId)
+      .replace(/\{\{agentType\}\}/g, agentType);
+  }
+
   setCwd(newCwd: string): void { this.cwd = newCwd; }
   setMainThinkingLevel(level: ThinkingLevel): void { this.mainThinkingLevel = level; }
   setMainModel(model: any): void { this.mainModel = model; }
@@ -162,6 +189,8 @@ export class AgentManager {
       this.agentTaskIds.set(id, options.taskIds);
     }
 
+    let effectiveDefinition: AgentDefinition | undefined;
+
     if (options.agent) {
       const definition = this.registry.findByName(this.cwd, options.agent);
       if (!definition) {
@@ -170,10 +199,12 @@ export class AgentManager {
         );
       }
 
-      // If taskIds provided, create a modified definition with task context appended
-      const effectiveDefinition = taskPromptSuffix
-        ? { ...definition, systemPrompt: definition.systemPrompt + taskPromptSuffix }
-        : definition;
+      // Inject subagent awareness and task context into system prompt
+      const awarenessBlock = this.getAwarenessPrompt(id, definition.name);
+      effectiveDefinition = {
+        ...definition,
+        systemPrompt: definition.systemPrompt + awarenessBlock + taskPromptSuffix,
+      };
 
       const color = assignColor(definition.color);
       agentColorHex = color.fg;
@@ -197,9 +228,10 @@ export class AgentManager {
       options._mainThinkingLevel = this.mainThinkingLevel;
       options._mainModel = this.mainModel;
 
-      // Inject task context into runtime agent's system prompt
-      if (taskPromptSuffix && options.systemPrompt) {
-        options.systemPrompt += taskPromptSuffix;
+      // Inject subagent awareness and task context into runtime agent's system prompt
+      if (options.systemPrompt) {
+        const awarenessBlock = this.getAwarenessPrompt(id, options.name || "custom");
+        options.systemPrompt += awarenessBlock + taskPromptSuffix;
       }
 
       // Create extra tool factory for message_agent if agent has messaging permissions
@@ -230,10 +262,7 @@ export class AgentManager {
     // Handle errors properly: update status and emit failure event
     // instead of just logging to console.
     if (options.agent) {
-      const effectiveDefinition = taskPromptSuffix
-        ? { ...this.registry.findByName(this.cwd, options.agent)!, systemPrompt: this.registry.findByName(this.cwd, options.agent)!.systemPrompt + taskPromptSuffix }
-        : this.registry.findByName(this.cwd, options.agent)!;
-      (handle as SubProcessAgent).start(effectiveDefinition).catch((err) => {
+      (handle as SubProcessAgent).start(effectiveDefinition!).catch((err) => {
         console.error(`[subagent] Failed to start subprocess agent "${options.agent}":`, err);
         this.handleStartFailure(handle, err);
       });
