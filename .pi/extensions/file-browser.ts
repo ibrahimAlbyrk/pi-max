@@ -236,7 +236,7 @@ async function openFileBrowser(
 
 							// Checkbox
 							let checkbox: string
-							if (entry.isDirectory) {
+							if (entry.name === "..") {
 								checkbox = "  "
 							} else {
 								checkbox = isSelected ? "☑ " : "☐ "
@@ -358,7 +358,7 @@ async function openFileBrowser(
 							}
 						} else if (matchesKey(data, "space")) {
 							const entry = items[highlightedIndex]
-							if (entry && !entry.isDirectory) {
+							if (entry && entry.name !== "..") {
 								if (selectedPaths.has(entry.relativePath)) {
 									selectedPaths.delete(entry.relativePath)
 								} else {
@@ -405,7 +405,7 @@ async function openFileBrowser(
 						}
 					} else if (matchesKey(data, "space")) {
 						const entry = items[highlightedIndex]
-						if (entry && !entry.isDirectory && entry.name !== "..") {
+						if (entry && entry.name !== "..") {
 							if (selectedPaths.has(entry.relativePath)) {
 								selectedPaths.delete(entry.relativePath)
 							} else {
@@ -417,18 +417,18 @@ async function openFileBrowser(
 							done({ action: "clipboard", paths: [...selectedPaths] })
 							return
 						}
-						// If no selection, copy highlighted file
+						// If no selection, copy highlighted entry
 						const entry = items[highlightedIndex]
-						if (entry && !entry.isDirectory) {
+						if (entry && entry.name !== "..") {
 							done({ action: "clipboard", paths: [entry.relativePath] })
 							return
 						}
 					} else if (matchesKey(data, "a") || matchesKey(data, "A")) {
-						const files = items.filter((e) => !e.isDirectory && e.name !== "..")
-						if (files.length > 0 && selectedPaths.size === files.length) {
+						const selectableItems = items.filter((e) => e.name !== "..")
+						if (selectableItems.length > 0 && selectedPaths.size === selectableItems.length) {
 							selectedPaths.clear()
 						} else {
-							for (const f of files) selectedPaths.add(f.relativePath)
+							for (const f of selectableItems) selectedPaths.add(f.relativePath)
 						}
 					} else if (matchesKey(data, "/")) {
 						searchMode = true
