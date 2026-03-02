@@ -56,12 +56,13 @@ export class SubProcessAgent implements AgentHandle {
   private cwd: string;
   private thinkingLevel: ThinkingLevel | undefined;
   private rpcReady = false;
-  private pendingPrompts: string[] = [];
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   private hasReceivedActivity = false;
+  private pendingRequests = new Map<string, { resolve: (response: any) => void; reject: (error: Error) => void }>();
+  private nextRequestId = 0;
 
-  /** Timeout in ms for first activity from subprocess (default: 30s) */
-  private static readonly ACTIVITY_TIMEOUT_MS = 30_000;
+  /** Timeout in ms for first activity from subprocess (default: 60s) */
+  private static readonly ACTIVITY_TIMEOUT_MS = 60_000;
 
   constructor(
     id: string,
@@ -138,16 +139,40 @@ export class SubProcessAgent implements AgentHandle {
     });
 
     // 7. Handle process exit
-    this.proc.on("close", (code) => {
+    this.proc.on("close", (code, signal) => {
       if (buffer.trim()) this.processRpcEvent(buffer);
       this.cleanupTempFiles();
 
       if (this.status === "aborted") return;
 
+
+      
+      // Reject pending RPC requests
+      for (const [id, pending] of this.pendingRequests.entries()) {
+        const errorMsg = signal 
+          ? `Process terminated by signal ${signal}`
+          : `Process exited with code ${code}`;
+        pending.reject(new Error(errorMsg));
+      }
+      this.pendingRequests.clear();
+      
+      // Handle unexpected exit during startup
+      if (this.status === "working" && !this.hasReceivedActivity) {
+        this.status = "error";
+        this.completedAt = Date.now();
+        const errorMsg = signal 
+          ? `Process terminated by signal ${signal}` 
+          : stderrBuffer.trim() || `Process exited with code ${code} during startup`;
+        this.emitAgentEvent("agent:failed", { error: errorMsg, usage: this.getUsage() });
+        return;
+      }
+
       if (code !== 0 && this.status !== "completed") {
         this.status = "error";
         this.completedAt = Date.now();
-        const errorMsg = stderrBuffer.trim() || `Process exited with code ${code}`;
+        const errorMsg = signal 
+          ? `Process terminated by signal ${signal}`
+          : stderrBuffer.trim() || `Process exited with code ${code}`;
         this.emitAgentEvent("agent:failed", { error: errorMsg, usage: this.getUsage() });
       } else if (this.status !== "completed" && this.status !== "error") {
         this.status = "completed";
@@ -160,20 +185,35 @@ export class SubProcessAgent implements AgentHandle {
       this.cleanupTempFiles();
       this.status = "error";
       this.completedAt = Date.now();
+      
+      // Reject pending RPC requests
+      for (const [id, pending] of this.pendingRequests.entries()) {
+        pending.reject(new Error(`Process error: ${err.message}`));
+      }
+      this.pendingRequests.clear();
+      
       this.emitAgentEvent("agent:failed", { error: err.message, usage: this.getUsage() });
     });
 
-    // 8. Wait for subprocess to signal readiness, then send initial task.
-    //    The subprocess emits { type: "session_ready" } on stdout once its
-    //    readline listener and extensions are fully initialized.
-    //    Without this, the prompt may arrive before the subprocess is ready
-    //    to read stdin, causing it to hang forever.
-    this.waitForReady().then(() => {
-      this.sendRpc({ type: "prompt", message: `Task: ${this.task}` });
-    });
+    // 8. Give the child a moment to boot (following pi-agent-teams pattern)
+    //    This eliminates race conditions without waiting for session_ready events.
+    await new Promise((r) => setTimeout(r, 120));
+    
+    // 9. Send initial task immediately after boot delay and wait for process readiness
+    try {
+      await this.sendRpcWithResponse({ type: "prompt", message: `Task: ${this.task}` });
+    } catch (err) {
+      this.status = "error";
+      this.completedAt = Date.now();
+      this.emitAgentEvent("agent:failed", { 
+        error: `Failed to send initial task: ${err.message}`, 
+        usage: this.getUsage() 
+      });
+      return;
+    }
 
-    // 9. Start activity timeout — if no events arrive within the timeout,
-    //    fail the agent instead of hanging forever in "working" state.
+    // 10. Start activity timeout — if no events arrive within the timeout,
+    //     fail the agent instead of hanging forever in "working" state.
     this.startActivityTimeout();
   }
 
@@ -189,14 +229,9 @@ export class SubProcessAgent implements AgentHandle {
       return;
     }
 
-    // Mark RPC as ready on first structured event (fallback for older pi versions without session_ready)
+    // Mark RPC as ready on first structured event
     if (!this.rpcReady) {
       this.rpcReady = true;
-      if (this.readyResolve) {
-        this.readyResolve();
-        this.readyResolve = null;
-      }
-      this.flushPendingPrompts();
     }
 
     // Clear activity timeout on first real event
@@ -205,16 +240,24 @@ export class SubProcessAgent implements AgentHandle {
       this.clearActivityTimeout();
     }
 
-    // RPC response acknowledgments — ignore silently
-    if (event.type === "response") return;
+    // RPC response acknowledgments — handle for request/response pattern
+    if (event.type === "response") {
+      const response = event as any;
+      if (response.id && this.pendingRequests.has(response.id)) {
+        const pending = this.pendingRequests.get(response.id)!;
+        this.pendingRequests.delete(response.id);
+        if (response.success) {
+          pending.resolve(response);
+        } else {
+          pending.reject(new Error(response.error || "RPC command failed"));
+        }
+      }
+      return;
+    }
 
-    // Handle session_ready signal from subprocess
+    // Handle session_ready signal from subprocess (optional, no action needed)
     if (event.type === "session_ready") {
       this.rpcReady = true;
-      if (this.readyResolve) {
-        this.readyResolve();
-        this.readyResolve = null;
-      }
       return;
     }
 
@@ -423,24 +466,62 @@ export class SubProcessAgent implements AgentHandle {
 
   // ─── Internal Helpers ───────────────────────────────────────────
 
-  private readyResolve: (() => void) | null = null;
 
-  private waitForReady(): Promise<void> {
-    if (this.rpcReady) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      this.readyResolve = resolve;
-    });
-  }
 
   private sendRpc(cmd: object): void {
     if (!this.proc || this.proc.killed || !this.proc.stdin || this.proc.stdin.destroyed) {
       return;
     }
     try {
-      this.proc.stdin.write(JSON.stringify(cmd) + "\n");
-    } catch {
-      // Process may have exited
+      const message = JSON.stringify(cmd) + "\n";
+      this.proc.stdin.write(message);
+    } catch (err) {
+      // Silent
     }
+  }
+
+  private async sendRpcWithResponse(cmd: any): Promise<any> {
+    if (!this.proc || this.proc.killed || !this.proc.stdin || this.proc.stdin.destroyed) {
+      throw new Error("Process is not running");
+    }
+    
+    const id = `req-${this.name}-${this.nextRequestId++}`;
+    const fullCmd = { id, ...cmd };
+    
+    return new Promise<any>((resolve, reject) => {
+      this.pendingRequests.set(id, { resolve, reject });
+      
+      // 10 second timeout for RPC response
+      const timeout = setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          reject(new Error(`Timeout waiting for RPC response (id=${id}, cmd=${cmd.type})`));
+        }
+      }, 10000);
+      
+      const originalResolve = resolve;
+      const originalReject = reject;
+      
+      this.pendingRequests.set(id, {
+        resolve: (response) => {
+          clearTimeout(timeout);
+          originalResolve(response);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          originalReject(error);
+        }
+      });
+      
+      try {
+        const message = JSON.stringify(fullCmd) + "\n";
+        this.proc!.stdin!.write(message);
+      } catch (err) {
+        clearTimeout(timeout);
+        this.pendingRequests.delete(id);
+        reject(new Error(`Exception sending RPC: ${err.message}`));
+      }
+    });
   }
 
   private startActivityTimeout(): void {
@@ -448,7 +529,7 @@ export class SubProcessAgent implements AgentHandle {
       if (this.hasReceivedActivity) return;
       if (this.status === "completed" || this.status === "error" || this.status === "aborted") return;
 
-      console.error(`[subagent] Activity timeout: agent "${this.name}" produced no output within ${SubProcessAgent.ACTIVITY_TIMEOUT_MS / 1000}s`);
+
       this.status = "error";
       this.completedAt = Date.now();
       this.emitAgentEvent("agent:failed", {
@@ -469,12 +550,7 @@ export class SubProcessAgent implements AgentHandle {
     }
   }
 
-  private flushPendingPrompts(): void {
-    for (const msg of this.pendingPrompts) {
-      this.sendRpc({ type: "prompt", message: msg, streamingBehavior: "followUp" });
-    }
-    this.pendingPrompts = [];
-  }
+
 
   private killProcess(): void {
     if (this.proc && !this.proc.killed) {
