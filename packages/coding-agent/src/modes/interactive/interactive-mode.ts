@@ -2205,6 +2205,12 @@ export class InteractiveMode {
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
+
+					// Auto-collapse when tool completes (unless user has global expand on)
+					if (!this.toolOutputExpanded) {
+						component.setExpanded(false);
+					}
+
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}
