@@ -425,7 +425,12 @@ export class Markdown implements Component {
 					break;
 
 				case "link": {
-					const linkText = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					// Render link text WITHOUT parent color override so link color takes precedence
+					const linkStyleContext: InlineStyleContext = {
+						applyText: (text: string) => text,
+						stylePrefix: "",
+					};
+					const linkText = this.renderInlineTokens(token.tokens || [], linkStyleContext);
 					// Wrap link text in OSC 8 hyperlink so terminals make it clickable (⌘+Click)
 					const osc8Start = `\x1b]8;;${token.href}\x07`;
 					const osc8End = `\x1b]8;;\x07`;
