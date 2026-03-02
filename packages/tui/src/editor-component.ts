@@ -71,4 +71,7 @@ export interface EditorComponent extends Component {
 
 	/** Set max visible items in autocomplete dropdown */
 	setAutocompleteMaxVisible?(maxVisible: number): void;
+
+	/** Set a badge on the bottom border (right-aligned). Pass undefined to remove. */
+	setBottomBorderBadge?(key: string, styledText: string | undefined): void;
 }
