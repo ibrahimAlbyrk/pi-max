@@ -346,18 +346,23 @@ export class InProcessAgent implements AgentHandle {
   }
 
   async abort(): Promise<void> {
+    this.clearActivityTimeout();
+
+    // Always dispose the session — even if already in a terminal state.
+    // Prevents leaked sessions when the agent completed before destroyAll() ran.
+    this.cleanup();
+
+    // Only emit events if transitioning from a non-terminal state
     if (this.status === "completed" || this.status === "error" || this.status === "aborted") {
       return;
     }
 
-    this.clearActivityTimeout();
     const wasIdle = this.status === "idle";
 
     if (wasIdle) {
       // Graceful shutdown of idle agent (already completed its task)
       this.status = "completed";
       this.completedAt = Date.now();
-      this.cleanup();
       this.emitAgentEvent("agent:completed", {
         output: this.lastOutput,
         usage: this.getUsage(),
@@ -367,7 +372,6 @@ export class InProcessAgent implements AgentHandle {
       // Actual abort of working/thinking agent
       this.status = "aborted";
       this.completedAt = Date.now();
-      this.cleanup();
       this.emitAgentEvent("agent:aborted", {
         usage: this.getUsage(),
       });

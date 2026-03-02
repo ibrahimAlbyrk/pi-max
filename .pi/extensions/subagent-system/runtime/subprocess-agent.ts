@@ -566,15 +566,13 @@ export class SubProcessAgent implements AgentHandle {
   /**
    * Force kill the process immediately without waiting.
    * Used during session shutdown for immediate cleanup.
+   *
+   * Always kills the process and cleans up temp files, even if the agent
+   * is already in a terminal state — prevents zombie subprocesses when
+   * the agent completed before destroyAll() ran.
    */
   async forceKill(): Promise<void> {
-    if (this.status === "completed" || this.status === "error" || this.status === "aborted") {
-      return;
-    }
-
     this.clearActivityTimeout();
-    this.status = "aborted";
-    this.completedAt = Date.now();
 
     if (this.proc && !this.proc.killed) {
       // Detach all event handlers BEFORE killing to prevent late events
@@ -593,7 +591,18 @@ export class SubProcessAgent implements AgentHandle {
     }
 
     this.cleanupTempFiles();
-    this.emitAgentEvent("agent:aborted", { usage: this.getUsage() });
+
+    // Reject any pending RPC requests
+    for (const [, pending] of this.pendingRequests) {
+      pending.reject(new Error("Agent force-killed during session shutdown"));
+    }
+    this.pendingRequests.clear();
+
+    // Update status only if not already terminal
+    if (this.status !== "aborted" && this.status !== "error") {
+      this.status = "aborted";
+      this.completedAt = this.completedAt || Date.now();
+    }
   }
 
   private emitAgentEvent(type: string, extra: Record<string, unknown> = {}): void {

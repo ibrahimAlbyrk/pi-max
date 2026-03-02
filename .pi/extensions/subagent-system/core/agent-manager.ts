@@ -23,6 +23,7 @@ import { assignColor } from "../tui/colors.js";
 import type {
   AgentDefinition,
   AgentEvent,
+  AgentEventHandler,
   AgentHandle,
   AgentStatus,
   InterAgentMessage,
@@ -43,6 +44,8 @@ export class AgentManager {
   private hookEngines = new Map<string, HookEngine>();
   private managerEvents = new TypedEventEmitter();
   private removalTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Tracked event handlers per agent — used to detach during destroyAll() */
+  private agentEventHandlers = new Map<string, { handle: AgentHandle; handler: AgentEventHandler }>();
   private mainThinkingLevel: ThinkingLevel = "off";
   private mainModel: any = undefined; // Model<any> from pi context
 
@@ -121,7 +124,9 @@ export class AgentManager {
     // Register in map and attach event listener BEFORE starting
     // to prevent race condition where early events are lost.
     this.agents.set(id, handle);
-    handle.on("*", (event: AgentEvent) => this.handleAgentEvent(handle, event));
+    const handler: AgentEventHandler = (event: AgentEvent) => this.handleAgentEvent(handle, event);
+    handle.on("*", handler);
+    this.agentEventHandlers.set(id, { handle, handler });
     this.managerEvents.emit("agent:created", handle);
 
     // Start the agent AFTER listeners are attached.
@@ -173,17 +178,25 @@ export class AgentManager {
     // 1. Snapshot agents before clearing maps
     const toKill = [...this.agents.values(), ...this.completedAgents.values()];
 
-    // 2. Clear all timers FIRST
+    // 2. Detach event handlers from all handles FIRST — prevents any late
+    //    events (buffered stdout, microtask completions) from reaching
+    //    handleAgentEvent after destroying is set back to false.
+    for (const [id, { handle, handler }] of this.agentEventHandlers) {
+      handle.off("*", handler);
+    }
+
+    // 3. Clear all timers
     for (const timer of this.removalTimers.values()) {
       clearTimeout(timer);
     }
 
-    // 3. Clear all maps and state IMMEDIATELY (before async kill)
+    // 4. Clear all maps and state IMMEDIATELY (before async kill)
     //    This ensures queries return empty even if kill takes time.
     this.agents.clear();
     this.completedAgents.clear();
     this.hookEngines.clear();
     this.removalTimers.clear();
+    this.agentEventHandlers.clear();
     this.agentMessagingConfigs.clear();
     this.messageCounts.clear();
     this.messageHistory = [];
@@ -586,6 +599,12 @@ export class AgentManager {
       this.agentMessagingConfigs.delete(agentId);
       this.messageCounts.delete(agentId);
       this.removalTimers.delete(agentId);
+      // Detach event handler for this agent
+      const tracked = this.agentEventHandlers.get(agentId);
+      if (tracked) {
+        tracked.handle.off("*", tracked.handler);
+        this.agentEventHandlers.delete(agentId);
+      }
       this.managerEvents.emit("agent:removed", agentId);
     }, delayMs);
 
