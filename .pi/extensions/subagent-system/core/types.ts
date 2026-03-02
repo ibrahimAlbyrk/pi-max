@@ -267,6 +267,9 @@ export interface SpawnOptions {
   // Messaging permissions
   messaging?: MessagingConfig;
 
+  // Task assignment (cross-extension: links agent to task management tasks)
+  taskIds?: number[];
+
   // Common
   task: string;
 

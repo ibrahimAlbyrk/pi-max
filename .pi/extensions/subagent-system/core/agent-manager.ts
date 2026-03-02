@@ -12,6 +12,8 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { TypedEventEmitter } from "./event-emitter.js";
 import type { AgentRegistry } from "./agent-registry.js";
 import type { HookEngine } from "./hook-engine.js";
@@ -32,6 +34,19 @@ import type {
   ThinkingLevel,
 } from "./types.js";
 import { DEFAULT_MESSAGING_CONFIG } from "./types.js";
+
+/** Lightweight task data read from .pi/tasks/tasks/{id}.json */
+interface TaskFileData {
+  id: number;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  tags: string[];
+  notes: { timestamp: string; author: string; text: string }[];
+  dependsOn: number[];
+  parentId: number | null;
+}
 
 let idCounter = 0;
 function generateId(): string {
@@ -57,6 +72,8 @@ export class AgentManager {
   private messageHistory: { from: string; to: string; timestamp: number }[] = [];
   /** When true, all agent events are suppressed (prevents cascading errors during shutdown) */
   private destroying = false;
+  /** Maps agent ID → assigned task IDs (for cross-extension event emission) */
+  private agentTaskIds = new Map<string, number[]>();
 
 
 
@@ -67,6 +84,65 @@ export class AgentManager {
     private cwd: string,
   ) {}
 
+  // ─── Task Integration Helpers ─────────────────────────────────
+
+  /**
+   * Read task details from per-file storage (.pi/tasks/tasks/{id}.json).
+   * Returns parsed task data for prompt injection. Skips missing files.
+   */
+  private readTaskFiles(taskIds: number[]): TaskFileData[] {
+    const tasks: TaskFileData[] = [];
+    for (const id of taskIds) {
+      try {
+        const filePath = join(this.cwd, ".pi", "tasks", "tasks", `${id}.json`);
+        const content = readFileSync(filePath, "utf-8");
+        tasks.push(JSON.parse(content) as TaskFileData);
+      } catch {
+        // Task file not found or parse error — skip silently
+      }
+    }
+    return tasks;
+  }
+
+  /**
+   * Format task details as markdown for system prompt injection.
+   */
+  private formatTasksForPrompt(tasks: TaskFileData[]): string {
+    if (tasks.length === 0) return "";
+
+    const lines: string[] = ["", "## Assigned Tasks", ""];
+    for (const t of tasks) {
+      lines.push(`### Task #${t.id}: ${t.title}`);
+      lines.push(`- **Status**: ${t.status}`);
+      lines.push(`- **Priority**: ${t.priority}`);
+      if (t.description) lines.push(`- **Description**: ${t.description}`);
+      if (t.tags && t.tags.length > 0) lines.push(`- **Tags**: ${t.tags.join(", ")}`);
+      if (t.dependsOn && t.dependsOn.length > 0) {
+        lines.push(`- **Depends on**: ${t.dependsOn.map((d: number) => `#${d}`).join(", ")}`);
+      }
+      if (t.notes && t.notes.length > 0) {
+        const recentNotes = t.notes.slice(-3);
+        lines.push("- **Recent notes**:");
+        for (const n of recentNotes) {
+          lines.push(`  - [${n.author}] ${n.text}`);
+        }
+      }
+      lines.push("");
+    }
+    lines.push("Work on the assigned tasks above. Use the task tool to update status as you progress.");
+    return lines.join("\n");
+  }
+
+  /**
+   * Emit agent-task assignment event for the task management extension.
+   */
+  private emitTaskAssignment(agentId: string, agentName: string, agentColor: string, taskIds: number[]): void {
+    this.pi.events.emit("subagent:tasks-assigned", {
+      taskIds,
+      agent: { agentId, agentName, agentColor },
+    });
+  }
+
   setCwd(newCwd: string): void { this.cwd = newCwd; }
   setMainThinkingLevel(level: ThinkingLevel): void { this.mainThinkingLevel = level; }
   setMainModel(model: any): void { this.mainModel = model; }
@@ -76,6 +152,15 @@ export class AgentManager {
   spawn(options: SpawnOptions): AgentHandle {
     const id = generateId();
     let handle: AgentHandle;
+    let agentColorHex = ""; // Hex fg color for task assignment events
+
+    // ── Task context injection (cross-extension) ──
+    let taskPromptSuffix = "";
+    if (options.taskIds && options.taskIds.length > 0) {
+      const taskData = this.readTaskFiles(options.taskIds);
+      taskPromptSuffix = this.formatTasksForPrompt(taskData);
+      this.agentTaskIds.set(id, options.taskIds);
+    }
 
     if (options.agent) {
       const definition = this.registry.findByName(this.cwd, options.agent);
@@ -85,9 +170,15 @@ export class AgentManager {
         );
       }
 
+      // If taskIds provided, create a modified definition with task context appended
+      const effectiveDefinition = taskPromptSuffix
+        ? { ...definition, systemPrompt: definition.systemPrompt + taskPromptSuffix }
+        : definition;
+
       const color = assignColor(definition.color);
+      agentColorHex = color.fg;
       const thinking = definition.thinking || this.mainThinkingLevel;
-      handle = new SubProcessAgent(id, definition, options.task, color.name, this.cwd, thinking);
+      handle = new SubProcessAgent(id, effectiveDefinition, options.task, color.name, this.cwd, thinking);
 
       if (definition.hooks && Object.keys(definition.hooks).length > 0) {
         const engine = this.hookEngineFactory();
@@ -102,8 +193,14 @@ export class AgentManager {
     } else {
       if (!options.name) options.name = `runtime-${idCounter}`;
       const color = assignColor();
+      agentColorHex = color.fg;
       options._mainThinkingLevel = this.mainThinkingLevel;
       options._mainModel = this.mainModel;
+
+      // Inject task context into runtime agent's system prompt
+      if (taskPromptSuffix && options.systemPrompt) {
+        options.systemPrompt += taskPromptSuffix;
+      }
 
       // Create extra tool factory for message_agent if agent has messaging permissions
       const messagingConfig = options.messaging;
@@ -133,8 +230,10 @@ export class AgentManager {
     // Handle errors properly: update status and emit failure event
     // instead of just logging to console.
     if (options.agent) {
-      const definition = this.registry.findByName(this.cwd, options.agent)!;
-      (handle as SubProcessAgent).start(definition).catch((err) => {
+      const effectiveDefinition = taskPromptSuffix
+        ? { ...this.registry.findByName(this.cwd, options.agent)!, systemPrompt: this.registry.findByName(this.cwd, options.agent)!.systemPrompt + taskPromptSuffix }
+        : this.registry.findByName(this.cwd, options.agent)!;
+      (handle as SubProcessAgent).start(effectiveDefinition).catch((err) => {
         console.error(`[subagent] Failed to start subprocess agent "${options.agent}":`, err);
         this.handleStartFailure(handle, err);
       });
@@ -143,6 +242,11 @@ export class AgentManager {
         console.error(`[subagent] Failed to start inprocess agent "${options.name}":`, err);
         this.handleStartFailure(handle, err);
       });
+    }
+
+    // ── Emit task assignment event (cross-extension) ──
+    if (options.taskIds && options.taskIds.length > 0) {
+      this.emitTaskAssignment(handle.id, handle.name, agentColorHex, options.taskIds);
     }
 
     return handle;
@@ -200,6 +304,7 @@ export class AgentManager {
     this.agentMessagingConfigs.clear();
     this.messageCounts.clear();
     this.messageHistory = [];
+    this.agentTaskIds.clear();
 
     // 4. Now kill processes (best-effort, errors ignored)
     const promises: Promise<void>[] = [];
@@ -598,6 +703,7 @@ export class AgentManager {
       this.hookEngines.delete(agentId);
       this.agentMessagingConfigs.delete(agentId);
       this.messageCounts.delete(agentId);
+      this.agentTaskIds.delete(agentId);
       this.removalTimers.delete(agentId);
       // Detach event handler for this agent
       const tracked = this.agentEventHandlers.get(agentId);

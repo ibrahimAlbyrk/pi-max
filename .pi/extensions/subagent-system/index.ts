@@ -93,6 +93,9 @@ export default function (pi: ExtensionAPI) {
       task: Type.String({
         description: "The task/instruction for the agent.",
       }),
+      taskIds: Type.Optional(Type.Array(Type.Number(), {
+        description: "Task IDs to assign to this agent. Task details are injected into the agent's system prompt.",
+      })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -129,6 +132,7 @@ export default function (pi: ExtensionAPI) {
           model: params.model,
           thinking: params.thinking as any,
           task: params.task,
+          taskIds: params.taskIds,
         });
 
         const agentLabel = params.agent || params.name || "unnamed";
