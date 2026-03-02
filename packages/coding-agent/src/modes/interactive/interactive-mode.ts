@@ -1793,21 +1793,24 @@ export class InteractiveMode {
 				this.editor.setText("");
 				this.isBashMode = false;
 				this.updateEditorBorderColor();
-			} else if (!this.editor.getText().trim()) {
-				// Double-escape with empty editor triggers /tree, /fork, or nothing based on setting
-				const action = this.settingsManager.getDoubleEscapeAction();
-				if (action !== "none") {
-					const now = Date.now();
-					if (now - this.lastEscapeTime < 500) {
+			} else {
+				const now = Date.now();
+				if (now - this.lastEscapeTime < 500) {
+					if (this.editor.getText().trim()) {
+						// Double-escape with content: clear editor
+						this.clearEditor();
+					} else {
+						// Double-escape with empty editor triggers /tree, /fork, or nothing based on setting
+						const action = this.settingsManager.getDoubleEscapeAction();
 						if (action === "tree") {
 							this.showTreeSelector();
-						} else {
+						} else if (action !== "none") {
 							this.showUserMessageSelector();
 						}
-						this.lastEscapeTime = 0;
-					} else {
-						this.lastEscapeTime = now;
 					}
+					this.lastEscapeTime = 0;
+				} else {
+					this.lastEscapeTime = now;
 				}
 			}
 		};
