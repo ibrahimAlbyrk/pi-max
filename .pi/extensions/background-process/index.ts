@@ -211,6 +211,105 @@ Examples:
 	});
 
 	pi.events.emit("bg:ready", { manager });
+
+	// ═══════════════════════════════════════════════════════════════════
+	// EDITOR BADGE — shows running process count on bottom border
+	// ═══════════════════════════════════════════════════════════════════
+
+	let badgeCtx: ExtensionContext | null = null;
+	let badgeTimer: ReturnType<typeof setInterval> | null = null;
+	let badgeFrame = 0;
+
+	const BADGE_KEY = "bg-count";
+	const SHINE_INTERVAL = 120; // ms per frame
+	const SHINE_PAUSE_FRAMES = 12; // pause frames between sweeps
+
+	function renderBadge(ctx: ExtensionContext, count: number): void {
+		if (!ctx.hasUI) return;
+		const th = ctx.ui.theme;
+
+		// Badge content: "⚙ bg 3" — characters to animate
+		const icon = "⚙";
+		const label = `bg ${count}`;
+		const fullText = `${icon} ${label}`;
+		const totalChars = fullText.length;
+		const totalFrames = totalChars + SHINE_PAUSE_FRAMES;
+
+		// Current shine position (wraps around)
+		const shinePos = badgeFrame % totalFrames;
+
+		// Build character-by-character with shine
+		let content = "";
+		for (let i = 0; i < totalChars; i++) {
+			const char = fullText[i];
+			const dist = Math.abs(i - shinePos);
+
+			if (dist === 0) {
+				// Shine peak — bright white bold
+				content += `\x1b[1;97m${char}\x1b[0m`;
+			} else if (dist === 1) {
+				// Near shine — accent color
+				content += th.fg("accent", char!);
+			} else {
+				// Normal — dim
+				content += th.fg("dim", char!);
+			}
+		}
+
+		// Wrap in brackets with border color
+		const badge = th.fg("border", "[ ") + content + th.fg("border", " ]");
+		ctx.ui.setEditorBadge(BADGE_KEY, badge);
+	}
+
+	function updateBadge(): void {
+		if (!badgeCtx) return;
+		const count = manager.runningCount;
+
+		if (count === 0) {
+			// No running processes — clear badge and stop timer
+			badgeCtx.ui.setEditorBadge(BADGE_KEY, undefined);
+			if (badgeTimer) {
+				clearInterval(badgeTimer);
+				badgeTimer = null;
+			}
+			badgeFrame = 0;
+			return;
+		}
+
+		renderBadge(badgeCtx, count);
+		badgeFrame++;
+
+		// Start animation timer if not running
+		if (!badgeTimer) {
+			badgeTimer = setInterval(() => {
+				if (!badgeCtx || manager.runningCount === 0) {
+					updateBadge(); // will clear
+					return;
+				}
+				badgeFrame++;
+				renderBadge(badgeCtx!, manager.runningCount);
+			}, SHINE_INTERVAL);
+		}
+	}
+
+	pi.on("session_start", (_event, ctx) => {
+		badgeCtx = ctx;
+		// Check if there are already running processes
+		if (manager.runningCount > 0) updateBadge();
+	});
+
+	pi.on("session_shutdown", () => {
+		if (badgeTimer) {
+			clearInterval(badgeTimer);
+			badgeTimer = null;
+		}
+		badgeCtx = null;
+	});
+
+	// React to process lifecycle events
+	pi.events.on("bg:started", () => updateBadge());
+	pi.events.on("bg:stopped", () => updateBadge());
+	pi.events.on("bg:crashed", () => updateBadge());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
