@@ -21,7 +21,7 @@ import type {
 // ─── Types ────────────────────────────────────────────────────────────
 
 export interface FeedEntry {
-  type: "status" | "turn" | "thinking" | "message" | "tool_call" | "tool_result" | "user_message" | "agent_message_sent" | "agent_message_received";
+  type: "system_prompt" | "task" | "status" | "turn" | "thinking" | "message" | "tool_call" | "tool_result" | "user_message" | "agent_message_sent" | "agent_message_received";
   timestamp: number;
   content: string;
   streaming?: boolean;

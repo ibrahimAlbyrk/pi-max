@@ -204,6 +204,21 @@ export class AgentChannelManager {
         lastStatus: handle.status,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
       };
+      // Add system prompt and task as initial feed entries
+      if (handle.systemPrompt) {
+        channel.buffer.push({
+          type: "system_prompt",
+          timestamp: handle.startedAt,
+          content: handle.systemPrompt,
+        });
+      }
+      if (handle.task) {
+        channel.buffer.push({
+          type: "task",
+          timestamp: handle.startedAt,
+          content: handle.task,
+        });
+      }
       this.channels.set(handle.id, channel);
       this.channelOrder.push(handle.id);
     }
@@ -737,6 +752,38 @@ export class AgentChannelManager {
     const indent = "          ";
 
     switch (entry.type) {
+      case "system_prompt": {
+        const label = `── System Prompt `;
+        const dashes = "─".repeat(Math.max(0, maxWidth - label.length - 12));
+        const header = ` ${timeStr}  ${fg}${label}${dashes}${ANSI_RESET}`;
+        const mw = Math.max(20, maxWidth - 14);
+        const promptLines = entry.content.split("\n");
+        const result: string[] = ["", header];
+        for (const line of promptLines) {
+          const wrapped = wrapTextWithAnsi(line, mw);
+          for (const w of wrapped) {
+            result.push(` ${indent}  ${ANSI_DIM}${w}${ANSI_RESET}`);
+          }
+        }
+        result.push("");
+        return result;
+      }
+      case "task": {
+        const label = `── Task `;
+        const dashes = "─".repeat(Math.max(0, maxWidth - label.length - 12));
+        const header = ` ${timeStr}  ${fg}${label}${dashes}${ANSI_RESET}`;
+        const mw = Math.max(20, maxWidth - 14);
+        const taskLines = entry.content.split("\n");
+        const result: string[] = ["", header];
+        for (const line of taskLines) {
+          const wrapped = wrapTextWithAnsi(line, mw);
+          for (const w of wrapped) {
+            result.push(` ${indent}  ${w}`);
+          }
+        }
+        result.push("");
+        return result;
+      }
       case "status":
         return [truncateToWidth(` ${timeStr}  ${entry.content}`, maxWidth + 2)];
       case "turn": {
