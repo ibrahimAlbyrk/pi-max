@@ -426,19 +426,10 @@ export class Markdown implements Component {
 
 				case "link": {
 					const linkText = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
-					// If link text matches href, only show the link once
-					// Compare raw text (token.text) not styled text (linkText) since linkText has ANSI codes
-					// For mailto: links, strip the prefix before comparing (autolinked emails have
-					// text="foo@bar.com" but href="mailto:foo@bar.com")
-					const hrefForComparison = token.href.startsWith("mailto:") ? token.href.slice(7) : token.href;
-					if (token.text === token.href || token.text === hrefForComparison) {
-						result += this.theme.link(this.theme.underline(linkText)) + stylePrefix;
-					} else {
-						result +=
-							this.theme.link(this.theme.underline(linkText)) +
-							this.theme.linkUrl(` (${token.href})`) +
-							stylePrefix;
-					}
+					// Wrap link text in OSC 8 hyperlink so terminals make it clickable (⌘+Click)
+					const osc8Start = `\x1b]8;;${token.href}\x07`;
+					const osc8End = `\x1b]8;;\x07`;
+					result += osc8Start + this.theme.link(this.theme.underline(linkText)) + osc8End + stylePrefix;
 					break;
 				}
 
