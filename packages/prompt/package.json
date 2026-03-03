@@ -1,0 +1,45 @@
+{
+	"name": "@mariozechner/pi-prompt",
+	"version": "0.55.3",
+	"description": "Centralized prompt management with template rendering, inheritance, composition, and caching",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"dependencies": {
+		"yaml": "^2.8.2"
+	},
+	"keywords": [
+		"prompt",
+		"template",
+		"llm",
+		"ai",
+		"management"
+	],
+	"author": "Mario Zechner",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/badlogic/pi-mono.git",
+		"directory": "packages/prompt"
+	},
+	"engines": {
+		"node": ">=20.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"typescript": "^5.7.3",
+		"vitest": "^3.2.4"
+	}
+}
