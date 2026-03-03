@@ -1414,7 +1414,10 @@ export class InteractiveMode {
 			setTitle: (title) => this.ui.terminal.setTitle(title),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			setEditorBadge: (key, content) => {
-				this.editor.setBottomBorderBadge?.(key, content);
+				type EditorWithBottomBorderBadge = EditorComponent & {
+					setBottomBorderBadge?: (badgeKey: typeof key, badgeContent: typeof content) => void;
+				};
+				(this.editor as EditorWithBottomBorderBadge).setBottomBorderBadge?.(key, content);
 				this.ui.requestRender();
 			},
 			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
