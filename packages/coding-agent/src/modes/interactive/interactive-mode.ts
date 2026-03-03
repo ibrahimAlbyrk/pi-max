@@ -158,6 +158,7 @@ export class InteractiveMode {
 	private autocompleteProvider: CombinedAutocompleteProvider | undefined;
 	private fdPath: string | undefined;
 	private editorContainer: Container;
+	private footerContainer: Container;
 	private footer: FooterComponent;
 	private footerDataProvider: FooterDataProvider;
 	private keybindings: KeybindingsManager;
@@ -283,6 +284,8 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider();
 		this.footer = new FooterComponent(session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(session.autoCompactionEnabled);
+		this.footerContainer = new Container();
+		this.footerContainer.addChild(this.footer);
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
@@ -381,8 +384,21 @@ export class InteractiveMode {
 		const [fdPath] = await Promise.all([ensureTool("fd"), ensureTool("rg")]);
 		this.fdPath = fdPath;
 
-		// Add header container as first child
-		this.ui.addChild(this.headerContainer);
+		// Set up region-based layout (alternate screen mode)
+		// Chat region (scrollable): header + messages + status
+		// Input region (fixed bottom): widgets + editor + footer
+		this.ui.addRegion({
+			id: "chat",
+			components: [this.headerContainer, this.chatContainer, this.pendingMessagesContainer, this.statusContainer],
+			sizing: "flex",
+			scrollable: true,
+			minHeight: 3,
+		});
+		this.ui.addRegion({
+			id: "input",
+			components: [this.widgetContainerAbove, this.editorContainer, this.widgetContainerBelow, this.footerContainer],
+			sizing: "fixed",
+		});
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
@@ -452,14 +468,7 @@ export class InteractiveMode {
 			}
 		}
 
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.statusContainer);
 		this.renderWidgets(); // Initialize with default spacer
-		this.ui.addChild(this.widgetContainerAbove);
-		this.ui.addChild(this.editorContainer);
-		this.ui.addChild(this.widgetContainerBelow);
-		this.ui.addChild(this.footer);
 		this.ui.setFocus(this.editor);
 
 		this.setupKeyHandlers();
@@ -1394,21 +1403,17 @@ export class InteractiveMode {
 			this.customFooter.dispose();
 		}
 
-		// Remove current footer from UI
-		if (this.customFooter) {
-			this.ui.removeChild(this.customFooter);
-		} else {
-			this.ui.removeChild(this.footer);
-		}
+		// Swap footer inside the footerContainer (works with both linear and region mode)
+		this.footerContainer.clear();
 
 		if (factory) {
 			// Create and add custom footer, passing the data provider
 			this.customFooter = factory(this.ui, theme, this.footerDataProvider);
-			this.ui.addChild(this.customFooter);
+			this.footerContainer.addChild(this.customFooter);
 		} else {
 			// Restore built-in footer
 			this.customFooter = undefined;
-			this.ui.addChild(this.footer);
+			this.footerContainer.addChild(this.footer);
 		}
 
 		this.ui.requestRender();
@@ -1930,6 +1935,32 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("resume", () => this.showSessionSelector());
+
+		// Scroll keybindings for the chat region
+		this.defaultEditor.onAction("scrollUp", () => {
+			this.ui.getScrollController("chat")?.scrollUp(3);
+			this.ui.requestRender();
+		});
+		this.defaultEditor.onAction("scrollDown", () => {
+			this.ui.getScrollController("chat")?.scrollDown(3);
+			this.ui.requestRender();
+		});
+		this.defaultEditor.onAction("scrollPageUp", () => {
+			this.ui.getScrollController("chat")?.pageUp();
+			this.ui.requestRender();
+		});
+		this.defaultEditor.onAction("scrollPageDown", () => {
+			this.ui.getScrollController("chat")?.pageDown();
+			this.ui.requestRender();
+		});
+		this.defaultEditor.onAction("scrollToTop", () => {
+			this.ui.getScrollController("chat")?.scrollToTop();
+			this.ui.requestRender();
+		});
+		this.defaultEditor.onAction("scrollToBottom", () => {
+			this.ui.getScrollController("chat")?.scrollToBottom();
+			this.ui.requestRender();
+		});
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;

@@ -5,7 +5,10 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { AlternateScreenManager } from "./alternate-screen.js";
 import { isKeyRelease, matchesKey } from "./keys.js";
+import { LayoutEngine, type LayoutRegion } from "./layout.js";
+import { ScrollController } from "./scroll-controller.js";
 import type { Terminal } from "./terminal.js";
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
 import { extractSegments, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
@@ -219,6 +222,14 @@ export class TUI extends Container {
 	private fullRedrawCount = 0;
 	private stopped = false;
 
+	// Region-based layout (alternate screen mode)
+	private regions: LayoutRegion[] = [];
+	private regionMode = false;
+	private layoutEngine = new LayoutEngine();
+	private alternateScreen: AlternateScreenManager | null = null;
+	private scrollControllers = new Map<string, ScrollController>();
+	private previousRegionViewport: string[] = [];
+
 	// Overlay stack for modal components rendered on top of base content
 	private overlayStack: {
 		component: Component;
@@ -263,6 +274,44 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	// === Region-based layout API ===
+
+	/**
+	 * Add a layout region. Enables region mode (alternate screen + fixed layout).
+	 * Regions are rendered top-to-bottom in the order they are added.
+	 */
+	addRegion(region: LayoutRegion): void {
+		this.regions.push(region);
+		this.regionMode = true;
+		if (region.scrollable) {
+			this.scrollControllers.set(region.id, new ScrollController());
+		}
+	}
+
+	/** Remove a region by ID */
+	removeRegion(id: string): void {
+		this.regions = this.regions.filter((r) => r.id !== id);
+		this.scrollControllers.delete(id);
+		if (this.regions.length === 0) {
+			this.regionMode = false;
+		}
+	}
+
+	/** Get all defined regions */
+	getRegions(): readonly LayoutRegion[] {
+		return this.regions;
+	}
+
+	/** Get the scroll controller for a scrollable region */
+	getScrollController(regionId: string): ScrollController | undefined {
+		return this.scrollControllers.get(regionId);
+	}
+
+	/** Check if TUI is in region-based layout mode */
+	isRegionMode(): boolean {
+		return this.regionMode;
 	}
 
 	setFocus(component: Component | null): void {
@@ -367,6 +416,12 @@ export class TUI extends Container {
 
 	override invalidate(): void {
 		super.invalidate();
+		// Invalidate region components
+		for (const region of this.regions) {
+			for (const component of region.components) {
+				component.invalidate?.();
+			}
+		}
 		for (const overlay of this.overlayStack) overlay.component.invalidate?.();
 	}
 
@@ -405,7 +460,17 @@ export class TUI extends Container {
 
 	stop(): void {
 		this.stopped = true;
-		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
+
+		// Exit alternate screen if in region mode
+		if (this.alternateScreen?.isActive) {
+			this.alternateScreen.exit();
+			this.alternateScreen = null;
+			this.terminal.showCursor();
+			this.terminal.stop();
+			return;
+		}
+
+		// Linear mode: move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
 			const targetRow = this.previousLines.length; // Line after the last content
 			const lineDiff = targetRow - this.hardwareCursorRow;
@@ -423,12 +488,17 @@ export class TUI extends Container {
 
 	requestRender(force = false): void {
 		if (force) {
-			this.previousLines = [];
-			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
-			this.cursorRow = 0;
-			this.hardwareCursorRow = 0;
-			this.maxLinesRendered = 0;
-			this.previousViewportTop = 0;
+			if (this.regionMode) {
+				this.previousRegionViewport = [];
+				this.previousWidth = -1;
+			} else {
+				this.previousLines = [];
+				this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
+				this.cursorRow = 0;
+				this.hardwareCursorRow = 0;
+				this.maxLinesRendered = 0;
+				this.previousViewportTop = 0;
+			}
 		}
 		if (this.renderRequested) return;
 		this.renderRequested = true;
@@ -464,6 +534,11 @@ export class TUI extends Container {
 			data = filtered;
 		}
 
+		// Handle mouse wheel events in region mode (SGR format: \x1b[<64;col;rowM / \x1b[<65;col;rowM)
+		if (this.regionMode && this.handleMouseWheel(data)) {
+			return;
+		}
+
 		// Global debug key handler (Shift+Ctrl+D)
 		if (matchesKey(data, "shift+ctrl+d") && this.onDebug) {
 			this.onDebug();
@@ -494,6 +569,40 @@ export class TUI extends Container {
 			this.focusedComponent.handleInput(data);
 			this.requestRender();
 		}
+	}
+
+	/**
+	 * Handle SGR mouse events in region mode. Returns true if event was consumed.
+	 * SGR format: \x1b[<button;col;rowM (press) / \x1b[<button;col;rowm (release)
+	 * Button 64 = scroll up, 65 = scroll down
+	 * All other mouse events are consumed (ignored) to prevent them reaching the editor.
+	 */
+	private handleMouseWheel(data: string): boolean {
+		const match = data.match(/^\x1b\[<(\d+);(\d+);(\d+)[Mm]$/);
+		if (!match) return false;
+
+		const button = parseInt(match[1], 10);
+
+		// Scroll wheel events: route to scrollable region
+		if (button === 64 || button === 65) {
+			for (const region of this.regions) {
+				if (region.scrollable) {
+					const ctrl = this.scrollControllers.get(region.id);
+					if (ctrl) {
+						if (button === 64) {
+							ctrl.scrollUp(3);
+						} else {
+							ctrl.scrollDown(3);
+						}
+						this.requestRender();
+						break;
+					}
+				}
+			}
+		}
+
+		// Consume ALL mouse events (clicks, drags, releases) — don't forward to editor
+		return true;
 	}
 
 	private parseCellSizeResponse(): string {
@@ -847,6 +956,13 @@ export class TUI extends Container {
 
 	private doRender(): void {
 		if (this.stopped) return;
+
+		// Dispatch to region-based renderer if regions are defined
+		if (this.regionMode) {
+			this.doRegionRender();
+			return;
+		}
+
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 		let viewportTop = Math.max(0, this.maxLinesRendered - height);
@@ -1143,6 +1259,132 @@ export class TUI extends Container {
 		this.positionHardwareCursor(cursorPos, newLines.length);
 
 		this.previousLines = newLines;
+		this.previousWidth = width;
+	}
+
+	/**
+	 * Region-based render: alternate screen + fixed layout regions.
+	 * Builds a viewport of exactly termHeight lines, then diffs against previous.
+	 */
+	private doRegionRender(): void {
+		const width = this.terminal.columns;
+		const height = this.terminal.rows;
+
+		// Enter alternate screen on first region render
+		if (!this.alternateScreen) {
+			this.alternateScreen = new AlternateScreenManager(this.terminal);
+			this.alternateScreen.enter();
+			this.alternateScreen.onResize(() => {
+				this.requestRender(true);
+			});
+		}
+
+		// Calculate layout
+		const layouts = this.layoutEngine.calculate(this.regions, width, height);
+
+		// Build viewport (flat array of exactly `height` lines)
+		const viewport: string[] = [];
+		for (const layout of layouts) {
+			let lines = layout.renderedLines;
+
+			// Apply scroll for scrollable regions
+			const scrollCtrl = this.scrollControllers.get(layout.region.id);
+			if (scrollCtrl && layout.region.scrollable) {
+				lines = scrollCtrl.getVisibleSlice(lines, layout.height);
+
+				// Add scroll indicators (consume 1 line each from viewport)
+				const info = scrollCtrl.getScrollInfo();
+				if (info.linesAbove > 0 || info.linesBelow > 0) {
+					const result: string[] = [];
+					if (info.linesAbove > 0) {
+						const indicator = `─── ↑ ${info.linesAbove} more `;
+						const fill = Math.max(0, width - visibleWidth(indicator));
+						result.push(indicator + "─".repeat(fill));
+					}
+					// Content lines (trim if indicators take space)
+					const contentStart = info.linesAbove > 0 ? 1 : 0;
+					const contentEnd = info.linesBelow > 0 ? lines.length - 1 : lines.length;
+					for (let i = contentStart; i < contentEnd; i++) {
+						result.push(lines[i]);
+					}
+					if (info.linesBelow > 0) {
+						const indicator = `─── ↓ ${info.linesBelow} more `;
+						const fill = Math.max(0, width - visibleWidth(indicator));
+						result.push(indicator + "─".repeat(fill));
+					}
+					lines = result;
+				}
+			} else {
+				// Non-scrollable: just take what fits
+				lines = lines.slice(0, layout.height);
+			}
+
+			// Add lines to viewport, padding to region height
+			for (let i = 0; i < layout.height; i++) {
+				viewport.push(i < lines.length ? lines[i] : "");
+			}
+		}
+
+		// Ensure viewport is exactly terminal height
+		while (viewport.length < height) viewport.push("");
+		if (viewport.length > height) viewport.length = height;
+
+		// Composite overlays (reuses existing overlay system)
+		let finalLines = viewport;
+		if (this.overlayStack.length > 0) {
+			// compositeOverlays expects maxLinesRendered for working height;
+			// in region mode viewport is already the right size, so we temporarily
+			// set maxLinesRendered to 0 so workingHeight = viewport.length = termHeight
+			const savedMaxLines = this.maxLinesRendered;
+			this.maxLinesRendered = 0;
+			finalLines = this.compositeOverlays([...viewport], width, height);
+			this.maxLinesRendered = savedMaxLines;
+			// Ensure result is exactly termHeight
+			if (finalLines.length > height) finalLines.length = height;
+		}
+
+		// Extract cursor position (scans all viewport lines)
+		const cursorPos = this.extractCursorPosition(finalLines, height);
+
+		// Apply line resets
+		finalLines = this.applyLineResets(finalLines);
+
+		// Determine if full repaint needed
+		const force = this.previousRegionViewport.length === 0 || this.previousWidth !== width;
+
+		// Render using absolute ANSI cursor positioning
+		let buffer = "\x1b[?2026h"; // Begin synchronized output
+
+		if (force) {
+			// Full repaint
+			for (let i = 0; i < finalLines.length; i++) {
+				buffer += `\x1b[${i + 1};1H\x1b[2K${finalLines[i]}`;
+			}
+		} else {
+			// Differential: only repaint changed lines
+			for (let i = 0; i < finalLines.length; i++) {
+				if (i >= this.previousRegionViewport.length || finalLines[i] !== this.previousRegionViewport[i]) {
+					buffer += `\x1b[${i + 1};1H\x1b[2K${finalLines[i]}`;
+				}
+			}
+		}
+
+		buffer += "\x1b[?2026l"; // End synchronized output
+		this.terminal.write(buffer);
+
+		// Position hardware cursor for IME
+		if (cursorPos) {
+			this.terminal.write(`\x1b[${cursorPos.row + 1};${cursorPos.col + 1}H`);
+			if (this.showHardwareCursor) {
+				this.terminal.showCursor();
+			} else {
+				this.terminal.hideCursor();
+			}
+		} else {
+			this.terminal.hideCursor();
+		}
+
+		this.previousRegionViewport = finalLines;
 		this.previousWidth = width;
 	}
 

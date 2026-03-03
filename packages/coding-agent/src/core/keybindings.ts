@@ -33,7 +33,13 @@ export type AppAction =
 	| "newSession"
 	| "tree"
 	| "fork"
-	| "resume";
+	| "resume"
+	| "scrollUp"
+	| "scrollDown"
+	| "scrollPageUp"
+	| "scrollPageDown"
+	| "scrollToTop"
+	| "scrollToBottom";
 
 /**
  * All configurable actions.
@@ -70,6 +76,12 @@ export const DEFAULT_APP_KEYBINDINGS: Record<AppAction, KeyId | KeyId[]> = {
 	tree: [],
 	fork: [],
 	resume: [],
+	scrollUp: [],
+	scrollDown: [],
+	scrollPageUp: [],
+	scrollPageDown: [],
+	scrollToTop: [],
+	scrollToBottom: [],
 };
 
 /**
@@ -101,6 +113,12 @@ const APP_ACTIONS: AppAction[] = [
 	"tree",
 	"fork",
 	"resume",
+	"scrollUp",
+	"scrollDown",
+	"scrollPageUp",
+	"scrollPageDown",
+	"scrollToTop",
+	"scrollToBottom",
 ];
 
 function isAppAction(action: string): action is AppAction {

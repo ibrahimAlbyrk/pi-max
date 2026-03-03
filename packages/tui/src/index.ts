@@ -1,5 +1,7 @@
 // Core TUI interfaces and classes
 
+// Alternate screen
+export { AlternateScreenManager, type ResizeHandler } from "./alternate-screen.js";
 // Autocomplete support
 export {
 	type AutocompleteItem,
@@ -45,6 +47,12 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.js";
+// Layout engine
+export { LayoutEngine, type LayoutRegion, type RegionLayout, type RegionSizing } from "./layout.js";
+// Region renderer
+export { RegionRenderer, type RegionState } from "./region-renderer.js";
+// Scroll controller
+export { ScrollController, type ScrollInfo } from "./scroll-controller.js";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.js";
 // Terminal interface and implementations
