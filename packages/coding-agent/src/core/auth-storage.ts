@@ -437,9 +437,9 @@ export class AuthStorage {
 						return provider.getApiKey(updatedCred);
 					}
 
-					// Refresh truly failed - return undefined so model discovery skips this provider
-					// User can /login to re-authenticate (credentials preserved for retry)
-					return undefined;
+					// Refresh truly failed - fall through to env var / fallback resolver
+					// instead of returning undefined. This ensures subprocess agents
+					// (which contend on the auth.json lock) can still use env var API keys.
 				}
 			} else {
 				// Token not expired, use current access token
