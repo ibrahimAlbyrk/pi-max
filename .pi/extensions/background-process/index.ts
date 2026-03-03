@@ -482,7 +482,7 @@ class ProcessPanel implements Focusable {
 			[th.fg("dim", "↑↓"), th.fg("muted", "navigate")],
 			[th.fg("dim", "↵"), th.fg("muted", "detail")],
 			[th.fg("dim", "s"), th.fg("muted", "stop")],
-			[th.fg("dim", "k"), th.fg("muted", "kill+remove")],
+			[th.fg("dim", "k"), th.fg("muted", "kill")],
 			[th.fg("dim", "r"), th.fg("muted", "restart")],
 			[th.fg("dim", "esc"), th.fg("muted", "close")],
 		];
