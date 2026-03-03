@@ -166,7 +166,7 @@ export class AgentManager {
         AGENT_ID: agentId,
         AGENT_TYPE: agentType,
       });
-      return "\n\n" + rendered;
+      return rendered;
     } catch {
       return "";
     }
@@ -205,7 +205,7 @@ export class AgentManager {
       const awarenessBlock = this.getAwarenessPrompt(id, definition.name);
       effectiveDefinition = {
         ...definition,
-        systemPrompt: definition.systemPrompt + awarenessBlock + taskPromptSuffix,
+        systemPrompt: awarenessBlock + "\n\n" + definition.systemPrompt + taskPromptSuffix,
       };
 
       const color = assignColor(definition.color);
@@ -233,7 +233,7 @@ export class AgentManager {
       // Inject subagent awareness and task context into runtime agent's system prompt
       if (options.systemPrompt) {
         const awarenessBlock = this.getAwarenessPrompt(id, options.name || "custom");
-        options.systemPrompt += awarenessBlock + taskPromptSuffix;
+        options.systemPrompt = awarenessBlock + "\n\n" + options.systemPrompt + taskPromptSuffix;
       }
 
       // Create extra tool factory for message_agent if agent has messaging permissions
