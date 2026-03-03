@@ -35,6 +35,11 @@ export type EditorAction =
 	| "selectPageDown"
 	| "selectConfirm"
 	| "selectCancel"
+	| "selectToggle"
+	| "selectNextTab"
+	| "selectPrevTab"
+	| "selectNextPage"
+	| "selectPrevPage"
 	// Clipboard
 	| "copy"
 	// Kill ring
@@ -96,6 +101,11 @@ export const DEFAULT_EDITOR_KEYBINDINGS: Required<EditorKeybindingsConfig> = {
 	selectPageDown: "pageDown",
 	selectConfirm: "enter",
 	selectCancel: ["escape", "ctrl+c"],
+	selectToggle: "space",
+	selectNextTab: "tab",
+	selectPrevTab: "shift+tab",
+	selectNextPage: "right",
+	selectPrevPage: "left",
 	// Clipboard
 	copy: "ctrl+c",
 	// Kill ring
