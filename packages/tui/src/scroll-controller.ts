@@ -64,7 +64,16 @@ export class ScrollController {
 		// Clamp offset to valid range
 		this.clampOffset();
 
-		return allLines.slice(this.offset, this.offset + viewportHeight);
+		const slice = allLines.slice(this.offset, this.offset + viewportHeight);
+
+		// Bottom-align: when content is shorter than viewport, pad top with empty lines
+		// so content sits at the bottom (adjacent to the input region below)
+		if (slice.length < viewportHeight) {
+			const padding = new Array<string>(viewportHeight - slice.length).fill("");
+			return [...padding, ...slice];
+		}
+
+		return slice;
 	}
 
 	/** Scroll up by N lines */
