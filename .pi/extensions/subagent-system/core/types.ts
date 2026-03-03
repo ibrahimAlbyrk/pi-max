@@ -276,4 +276,5 @@ export interface SpawnOptions {
   // Inherited from main agent (set by manager)
   _mainThinkingLevel?: ThinkingLevel;
   _mainModel?: any; // Model<any> from pi — passed directly to avoid resolution issues
+  _resolvedApiKey?: string; // Pre-resolved API key from parent to avoid OAuth lock contention
 }

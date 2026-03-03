@@ -415,6 +415,8 @@ export default function (pi: ExtensionAPI) {
     if (level) manager.setMainThinkingLevel(level);
     // Inherit main agent's model (avoids model resolution issues in subagents)
     if (ctx.model) manager.setMainModel(ctx.model);
+    // Store model registry for subprocess API key resolution (avoids OAuth lock contention)
+    if (ctx.modelRegistry) manager.setModelRegistry(ctx.modelRegistry);
   });
 
   // ─── 10. Track thinking level + model changes ──────────────────

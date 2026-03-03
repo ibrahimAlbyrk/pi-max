@@ -59,8 +59,10 @@ export class SubProcessAgent implements AgentHandle {
   private rpcReady = false;
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   private hasReceivedActivity = false;
+  private hasEmittedStarted = false;
   private pendingRequests = new Map<string, { resolve: (response: any) => void; reject: (error: Error) => void }>();
   private nextRequestId = 0;
+  private modelRegistry: any = null;
 
   /** Timeout in ms for first activity from subprocess (default: 60s) */
   private static readonly ACTIVITY_TIMEOUT_MS = 60_000;
@@ -72,8 +74,10 @@ export class SubProcessAgent implements AgentHandle {
     color: string,
     cwd: string,
     thinkingLevel?: ThinkingLevel,
+    modelRegistry?: any,
   ) {
     this.thinkingLevel = thinkingLevel;
+    this.modelRegistry = modelRegistry || null;
     this.id = id;
     this.name = definition.name;
     this.description = definition.description;
@@ -100,6 +104,26 @@ export class SubProcessAgent implements AgentHandle {
     const thinking = definition.thinking || this.thinkingLevel;
     if (thinking && thinking !== "off") {
       args.push("--thinking", thinking);
+    }
+
+    // 1b. Resolve API key from parent's ModelRegistry to avoid OAuth lock contention.
+    // When multiple subprocess agents start simultaneously, they all contend on
+    // auth.json lock for OAuth token refresh. By resolving the key in the parent
+    // (which already has it) and passing via --api-key, the subprocess uses a
+    // runtime override that bypasses OAuth entirely.
+    if (this.modelRegistry && definition.model) {
+      try {
+        const available = await this.modelRegistry.getAvailable();
+        const model = available.find((m: any) => m.id === definition.model);
+        if (model) {
+          const apiKey = await this.modelRegistry.getApiKeyForProvider(model.provider);
+          if (apiKey) {
+            args.push("--api-key", apiKey);
+          }
+        }
+      } catch {
+        // Best effort — subprocess will try to resolve on its own
+      }
     }
 
     // 2. Write system prompt to temp file if present
@@ -233,13 +257,8 @@ export class SubProcessAgent implements AgentHandle {
       this.rpcReady = true;
     }
 
-    // Clear activity timeout on first real event
-    if (!this.hasReceivedActivity) {
-      this.hasReceivedActivity = true;
-      this.clearActivityTimeout();
-    }
-
     // RPC response acknowledgments — handle for request/response pattern
+    // These are infrastructure events, NOT real agent activity.
     if (event.type === "response") {
       const response = event as any;
       if (response.id && this.pendingRequests.has(response.id)) {
@@ -250,21 +269,51 @@ export class SubProcessAgent implements AgentHandle {
         } else {
           pending.reject(new Error(response.error || "RPC command failed"));
         }
+      } else if (!response.success && response.error) {
+        // Late error response: session.prompt() failed AFTER the initial success
+        // response was already sent and resolved. RPC mode sends success immediately
+        // for fire-and-forget prompts, then the async error arrives with the same id.
+        // Without this, the error is silently swallowed and the agent hangs until
+        // the activity timeout fires.
+        this.clearActivityTimeout();
+        if (this.status !== "completed" && this.status !== "error" && this.status !== "aborted") {
+          this.status = "error";
+          this.completedAt = Date.now();
+          this.emitAgentEvent("agent:failed", {
+            error: `Prompt failed: ${response.error}`,
+            usage: this.getUsage(),
+          });
+        }
       }
       return;
     }
 
-    // Handle session_ready signal from subprocess (optional, no action needed)
+    // Handle session_ready signal from subprocess (infrastructure, not real activity)
     if (event.type === "session_ready") {
       this.rpcReady = true;
       return;
+    }
+
+    // Clear activity timeout on first REAL event (after infrastructure early-returns).
+    // This prevents session_ready/response from disarming the timeout prematurely.
+    if (!this.hasReceivedActivity) {
+      this.hasReceivedActivity = true;
+      this.clearActivityTimeout();
+    }
+
+    // Emit agent:started on first real event if not yet emitted.
+    // This ensures the agent is considered "started" even if the subprocess
+    // never sends an explicit "agent_start" event.
+    if (!this.hasEmittedStarted) {
+      this.hasEmittedStarted = true;
+      this.emitAgentEvent("agent:started");
     }
 
     const now = Date.now();
 
     switch (event.type) {
       case "agent_start":
-        this.emitAgentEvent("agent:started");
+        // agent:started already emitted above on first real event — no-op
         break;
 
       case "turn_start":

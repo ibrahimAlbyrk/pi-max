@@ -64,6 +64,7 @@ export class AgentManager {
   private agentEventHandlers = new Map<string, { handle: AgentHandle; handler: AgentEventHandler }>();
   private mainThinkingLevel: ThinkingLevel = "off";
   private mainModel: any = undefined; // Model<any> from pi context
+  private modelRegistry: any = null; // ModelRegistry from pi context
 
   /** Messaging state: agent configs (id → MessagingConfig) */
   private agentMessagingConfigs = new Map<string, MessagingConfig>();
@@ -175,6 +176,7 @@ export class AgentManager {
   setCwd(newCwd: string): void { this.cwd = newCwd; }
   setMainThinkingLevel(level: ThinkingLevel): void { this.mainThinkingLevel = level; }
   setMainModel(model: any): void { this.mainModel = model; }
+  setModelRegistry(registry: any): void { this.modelRegistry = registry; }
 
   // ─── Spawn ──────────────────────────────────────────────────────
 
@@ -211,7 +213,7 @@ export class AgentManager {
       const color = assignColor(definition.color);
       agentColorHex = color.fg;
       const thinking = definition.thinking || this.mainThinkingLevel;
-      handle = new SubProcessAgent(id, effectiveDefinition, options.task, color.name, this.cwd, thinking);
+      handle = new SubProcessAgent(id, effectiveDefinition, options.task, color.name, this.cwd, thinking, this.modelRegistry);
 
       if (definition.hooks && Object.keys(definition.hooks).length > 0) {
         const engine = this.hookEngineFactory();
