@@ -53,12 +53,18 @@ export class ScrollController {
 	 * @returns Visible portion of lines, clipped to viewport height
 	 */
 	getVisibleSlice(allLines: string[], viewportHeight: number): string[] {
+		const prevContentHeight = this.contentHeight;
 		this.contentHeight = allLines.length;
 		this.viewportHeight = viewportHeight;
 
-		// Auto-follow: scroll to show latest content
+		// Auto-follow: only adjust offset when content actually changed (new messages, etc.)
+		// When only viewport resizes (editor grow/shrink), keep offset stable so chat
+		// content doesn't jump while the user types multi-line input.
 		if (this._autoFollow) {
-			this.offset = Math.max(0, allLines.length - viewportHeight);
+			const contentChanged = allLines.length !== prevContentHeight;
+			if (contentChanged) {
+				this.offset = Math.max(0, allLines.length - viewportHeight);
+			}
 		}
 
 		// Clamp offset to valid range
