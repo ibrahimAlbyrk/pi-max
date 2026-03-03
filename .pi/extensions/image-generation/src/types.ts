@@ -22,6 +22,7 @@ export interface EditParams {
 export interface ImageProvider {
 	name: string;
 	isAvailable(): boolean;
+	estimateCost(params: { size?: string }): number;
 	generate(params: GenerateParams): Promise<GeneratedImage>;
 	edit?(params: EditParams): Promise<GeneratedImage>;
 }

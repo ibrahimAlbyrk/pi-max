@@ -9,6 +9,10 @@ export class OpenAIProvider implements ImageProvider {
 		return !!process.env.OPENAI_API_KEY;
 	}
 
+	estimateCost(_params: { size?: string }): number {
+		return 0.08;
+	}
+
 	async generate(params: GenerateParams): Promise<GeneratedImage> {
 		const size = this.mapSize(params.size, params.aspectRatio);
 

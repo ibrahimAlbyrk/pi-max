@@ -9,6 +9,10 @@ export class StabilityProvider implements ImageProvider {
 		return !!process.env.STABILITY_API_KEY;
 	}
 
+	estimateCost(_params: { size?: string }): number {
+		return 0.065;
+	}
+
 	async generate(params: GenerateParams): Promise<GeneratedImage> {
 		const formData = new FormData();
 		formData.append("prompt", params.prompt);

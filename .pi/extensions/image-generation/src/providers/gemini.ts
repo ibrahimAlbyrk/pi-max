@@ -10,6 +10,15 @@ export class GeminiProvider implements ImageProvider {
 		return !!process.env.GEMINI_API_KEY;
 	}
 
+	estimateCost(params: { size?: string }): number {
+		switch (params.size) {
+			case "512px": return 0.045;
+			case "2K": return 0.101;
+			case "4K": return 0.151;
+			default: return 0.067; // 1K
+		}
+	}
+
 	async generate(params: GenerateParams): Promise<GeneratedImage> {
 		const ai = this.getClient();
 		const response = await ai.models.generateContent({

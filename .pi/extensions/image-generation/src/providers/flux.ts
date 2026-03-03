@@ -13,6 +13,10 @@ export class FluxProvider implements ImageProvider {
 		return !!process.env.FAL_KEY;
 	}
 
+	estimateCost(_params: { size?: string }): number {
+		return 0.05;
+	}
+
 	async generate(params: GenerateParams): Promise<GeneratedImage> {
 		const body: Record<string, unknown> = {
 			prompt: params.prompt,
