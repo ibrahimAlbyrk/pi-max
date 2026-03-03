@@ -66,6 +66,38 @@ Override with `PI_IMAGE_PROVIDER` env var or `provider` tool parameter.
 "Generate 5 enemy sprites in pixel art style with flux provider"
 ```
 
+## Budget
+
+Track and limit image generation spending with a JSON config file.
+
+**Global config** (all projects): `~/.pi/agent/extensions/image-generation.json`
+**Project config** (overrides global): `<project>/.pi/extensions/image-generation.json`
+
+```json
+{
+  "budgetLimit": 20,
+  "budgetWarning": 15
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `budgetLimit` | Max spend in $. Generation blocked when reached. |
+| `budgetWarning` | Warning threshold in $. Shows alert on each generation after this. |
+
+Both fields are optional. Without `budgetLimit`, there is no spending cap.
+
+Budget state is tracked per session via `appendEntry` and persists across reloads.
+
+### Approximate costs per image
+
+| Provider | $/image |
+|----------|---------|
+| gemini | $0.045–$0.151 (varies by size) |
+| openai | $0.080 |
+| flux | $0.050 |
+| stability | $0.065 |
+
 ## Architecture
 
 ```
@@ -73,6 +105,7 @@ src/
 ├── index.ts           — Tool registration (provider-agnostic)
 ├── types.ts           — ImageProvider interface
 ├── resolver.ts        — Auto-detect or select provider
+├── budget.ts          — Budget tracking and limits
 ├── utils.ts           — Shared utilities
 └── providers/
     ├── gemini.ts      — Google Gemini (Nano Banana)

@@ -2,8 +2,7 @@
  * Image Generation Extension — Multi-Provider
  *
  * Generates and edits images using multiple AI providers.
- * Images are displayed as separate conversation messages (not inside tool box).
- * Images are filtered from LLM context via the "context" event.
+ * Images are displayed inline via renderResult (details only, not sent to LLM).
  *
  * Providers (auto-detected from env vars):
  *   gemini    — Nano Banana (GEMINI_API_KEY)
@@ -11,8 +10,10 @@
  *   flux      — FLUX Pro via fal.ai (FAL_KEY)
  *   stability — Stable Diffusion 3 (STABILITY_API_KEY)
  *
- * Environment variables:
- *   PI_IMAGE_PROVIDER  — Force a specific provider (optional)
+ * Budget config (JSON):
+ *   Global:  ~/.pi/agent/extensions/image-generation.json
+ *   Project: <project>/.pi/extensions/image-generation.json
+ *   Fields:  { "budgetLimit": 20, "budgetWarning": 15 }
  */
 
 import { StringEnum } from "@mariozechner/pi-ai";
@@ -21,10 +22,9 @@ import { Container, Image, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { BudgetTracker } from "./budget.js";
 import { PROVIDER_NAMES, resolveProvider } from "./resolver.js";
 import { mimeTypeFromExtension } from "./utils.js";
-
-const IMAGE_CUSTOM_TYPE = "generated-image";
 
 const ASPECT_RATIOS = [
 	"1:1", "1:4", "1:8", "2:3", "3:2", "3:4",
@@ -33,44 +33,66 @@ const ASPECT_RATIOS = [
 
 const IMAGE_SIZES = ["512px", "1K", "2K", "4K"] as const;
 
-export default function imageGeneration(pi: ExtensionAPI) {
-	// ── Filter image messages from LLM context ──────────────────────────
-	pi.on("context", async (event) => {
-		const filtered = event.messages.filter(
-			(m: { role: string; customType?: string }) =>
-				!(m.role === "custom" && m.customType === IMAGE_CUSTOM_TYPE),
-		);
-		return { messages: filtered };
-	});
+const budget = new BudgetTracker();
 
-	// ── Render image messages as standalone conversation entries ─────────
-	pi.registerMessageRenderer(IMAGE_CUSTOM_TYPE, (message, _options, theme) => {
-		const details = message.details as {
-			imageData?: string;
-			imageMimeType?: string;
-			savedPath?: string;
-			provider?: string;
-		} | undefined;
-		if (!details?.imageData) return undefined;
+// Shared renderResult — shows image + budget status from details (not sent to LLM)
+function renderImageResult(
+	result: { content: Array<{ type: string; text?: string }>; details?: Record<string, unknown>; isError?: boolean },
+	options: { expanded: boolean; isPartial: boolean },
+	theme: { fg: (color: string, text: string) => string; bold: (text: string) => string },
+) {
+	if (options.isPartial) {
+		return new Text(theme.fg("warning", "Generating..."), 0, 0);
+	}
 
-		const container = new Container();
+	if (result.isError) {
+		const text = result.content.find(c => c.type === "text")?.text || "Error";
+		return new Text(theme.fg("error", text), 0, 0);
+	}
 
-		// Label line
-		const parts: string[] = [];
-		if (details.provider) parts.push(details.provider);
-		if (details.savedPath) parts.push(`→ ${details.savedPath}`);
-		const label = theme.fg("success", "[image] ") + theme.fg("dim", parts.join(" "));
-		container.addChild(new Text(label, 0, 0));
+	const details = result.details as {
+		imageData?: string;
+		imageMimeType?: string;
+		cost?: number;
+		budgetStatus?: string;
+		budgetWarning?: boolean;
+	} | undefined;
 
-		// Inline image
+	const container = new Container();
+
+	const textContent = result.content.find(c => c.type === "text")?.text || "Done";
+	container.addChild(new Text(theme.fg("success", textContent), 0, 0));
+
+	// Budget info line
+	if (details?.cost !== undefined) {
+		const costStr = `$${details.cost.toFixed(3)}`;
+		const budgetLine = details.budgetStatus
+			? `Cost: ${costStr} | ${details.budgetStatus}`
+			: `Cost: ${costStr}`;
+		const color = details.budgetWarning ? "warning" : "dim";
+		container.addChild(new Text(theme.fg(color, budgetLine), 0, 0));
+	}
+
+	if (details?.imageData) {
 		container.addChild(new Image(
 			details.imageData,
 			details.imageMimeType || "image/png",
 			{ fallbackColor: (s: string) => theme.fg("dim", s) },
 			{ maxWidthCells: 60, maxHeightCells: 30 },
 		));
+	}
 
-		return container;
+	return container;
+}
+
+export default function imageGeneration(pi: ExtensionAPI) {
+	// ── Initialize budget on session start ───────────────────────────────
+	pi.on("session_start", async (_event, ctx) => {
+		budget.loadConfig(ctx.cwd);
+		budget.setPersist((customType, data) => pi.appendEntry(customType, data));
+
+		const entries = ctx.sessionManager.getEntries();
+		budget.loadFromEntries(entries as Array<{ type: string; customType?: string; data?: unknown }>);
 	});
 
 	// ── generate_image ──────────────────────────────────────────────────
@@ -81,12 +103,12 @@ export default function imageGeneration(pi: ExtensionAPI) {
 			"Generate an image from a text prompt. " +
 			"Providers: gemini (Nano Banana), openai (gpt-image-1), flux (FLUX Pro), stability (SD3). " +
 			"Auto-detects provider from available API keys, or specify with provider param. " +
-			"Supports various aspect ratios. Can save to a file path.",
+			"Supports various aspect ratios. Always saves to the specified output_path.",
 		parameters: Type.Object({
 			prompt: Type.String({ description: "Image description / generation prompt." }),
-			output_path: Type.Optional(Type.String({
-				description: "File path to save the generated image (e.g., assets/hero.png).",
-			})),
+			output_path: Type.String({
+				description: "File path to save the generated image (e.g., assets/hero.png). REQUIRED.",
+			}),
 			provider: Type.Optional(StringEnum(PROVIDER_NAMES as unknown as readonly [string, ...string[]])),
 			aspect_ratio: Type.Optional(StringEnum(ASPECT_RATIOS)),
 			size: Type.Optional(StringEnum(IMAGE_SIZES)),
@@ -108,17 +130,15 @@ export default function imageGeneration(pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { isPartial }, theme) {
-			if (isPartial) return new Text(theme.fg("warning", "Generating..."), 0, 0);
-			if (result.isError) {
-				const text = result.content.find((c: { type: string }) => c.type === "text") as { text?: string } | undefined;
-				return new Text(theme.fg("error", text?.text || "Error"), 0, 0);
-			}
-			const textContent = result.content.find((c: { type: string }) => c.type === "text") as { text?: string } | undefined;
-			return new Text(theme.fg("success", textContent?.text || "Done"), 0, 0);
-		},
+		renderResult: renderImageResult,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			// Budget check
+			const budgetError = budget.check();
+			if (budgetError) {
+				return { content: [{ type: "text", text: budgetError }], isError: true };
+			}
+
 			const provider = resolveProvider(params.provider);
 
 			onUpdate?.({
@@ -133,39 +153,30 @@ export default function imageGeneration(pi: ExtensionAPI) {
 				signal,
 			});
 
-			// Save to file if output_path provided
-			let savedPath: string | undefined;
-			if (params.output_path) {
-				const fullPath = resolve(ctx.cwd, params.output_path);
-				await mkdir(dirname(fullPath), { recursive: true });
-				await writeFile(fullPath, Buffer.from(result.data, "base64"));
-				savedPath = params.output_path;
-			}
+			// Record cost
+			const cost = provider.estimateCost({ size: params.size });
+			const showWarning = budget.record(cost);
+
+			// Save to file
+			const fullPath = resolve(ctx.cwd, params.output_path);
+			await mkdir(dirname(fullPath), { recursive: true });
+			await writeFile(fullPath, Buffer.from(result.data, "base64"));
+			const savedPath = params.output_path;
 
 			const summary: string[] = [];
-			summary.push(`Generated image with ${provider.name}.`);
-			if (savedPath) summary.push(`Saved to: ${savedPath}`);
+			summary.push(`Generated image with ${provider.name}. Saved to: ${savedPath}`);
 
-			// Inject image as separate conversation message (filtered from LLM context)
-			pi.sendMessage(
-				{
-					customType: IMAGE_CUSTOM_TYPE,
-					content: "",
-					display: true,
-					details: {
-						imageData: result.data,
-						imageMimeType: result.mimeType,
-						provider: provider.name,
-						savedPath,
-					},
-				},
-				{ deliverAs: "nextTurn" },
-			);
-
-			// Tool result: text only (sent to LLM)
 			return {
 				content: [{ type: "text", text: summary.join(" ") }],
-				details: { provider: provider.name, savedPath },
+				details: {
+					provider: provider.name,
+					savedPath,
+					imageData: result.data,
+					imageMimeType: result.mimeType,
+					cost,
+					budgetStatus: budget.getStatus(),
+					budgetWarning: showWarning,
+				},
 			};
 		},
 	});
@@ -208,17 +219,15 @@ export default function imageGeneration(pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { isPartial }, theme) {
-			if (isPartial) return new Text(theme.fg("warning", "Editing..."), 0, 0);
-			if (result.isError) {
-				const text = result.content.find((c: { type: string }) => c.type === "text") as { text?: string } | undefined;
-				return new Text(theme.fg("error", text?.text || "Error"), 0, 0);
-			}
-			const textContent = result.content.find((c: { type: string }) => c.type === "text") as { text?: string } | undefined;
-			return new Text(theme.fg("success", textContent?.text || "Done"), 0, 0);
-		},
+		renderResult: renderImageResult,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			// Budget check
+			const budgetError = budget.check();
+			if (budgetError) {
+				return { content: [{ type: "text", text: budgetError }], isError: true };
+			}
+
 			const provider = resolveProvider(params.provider);
 
 			if (!provider.edit) {
@@ -260,6 +269,10 @@ export default function imageGeneration(pi: ExtensionAPI) {
 				signal,
 			});
 
+			// Record cost
+			const cost = provider.estimateCost({ size: params.size });
+			const showWarning = budget.record(cost);
+
 			// Save
 			const outPath = params.output_path || params.image_path;
 			const fullOutPath = resolve(ctx.cwd, outPath);
@@ -270,26 +283,18 @@ export default function imageGeneration(pi: ExtensionAPI) {
 			summary.push(`Edited image with ${provider.name}.`);
 			summary.push(`Saved to: ${outPath}`);
 
-			// Inject image as separate conversation message (filtered from LLM context)
-			pi.sendMessage(
-				{
-					customType: IMAGE_CUSTOM_TYPE,
-					content: "",
-					display: true,
-					details: {
-						imageData: result.data,
-						imageMimeType: result.mimeType,
-						provider: provider.name,
-						savedPath: outPath,
-					},
-				},
-				{ deliverAs: "nextTurn" },
-			);
-
-			// Tool result: text only (sent to LLM)
 			return {
 				content: [{ type: "text", text: summary.join(" ") }],
-				details: { provider: provider.name, outputPath: outPath, sourceImage: params.image_path },
+				details: {
+					provider: provider.name,
+					outputPath: outPath,
+					sourceImage: params.image_path,
+					imageData: result.data,
+					imageMimeType: result.mimeType,
+					cost,
+					budgetStatus: budget.getStatus(),
+					budgetWarning: showWarning,
+				},
 			};
 		},
 	});
