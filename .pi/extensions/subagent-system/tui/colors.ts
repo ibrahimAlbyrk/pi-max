@@ -91,3 +91,71 @@ export const ANSI_BOLD = "\x1b[1m";
  * but PRESERVES background. Use inside Box content so bgFn isn't killed.
  */
 export const ANSI_SOFTRESET = "\x1b[22m\x1b[23m\x1b[24m\x1b[29m\x1b[39m";
+
+// ─── Feed Panel Background Colors ────────────────────────────────────
+//
+// Theme-compatible background colors matching main context aesthetics.
+// Based on dark.json: toolPendingBg=#282832, toolSuccessBg=#283228,
+// toolErrorBg=#3c2828, userMessageBg=#343541, customMessageBg=#2d2838
+//
+
+/** Background for tool call/result blocks (matches toolPendingBg) */
+export const FEED_BG_TOOL = "#1e1e26";
+
+/** Background for system prompt blocks */
+export const FEED_BG_SYSTEM = "#1a1a22";
+
+/** Background for task blocks */
+export const FEED_BG_TASK = "#1c1e24";
+
+/** Background for user messages (matches userMessageBg) */
+export const FEED_BG_USER = "#242430";
+
+/** Background for the feed header bar */
+export const FEED_BG_HEADER = "#1a1c24";
+
+/** Foreground for muted/secondary text */
+export const FEED_FG_MUTED = "#6b7080";
+
+/** Foreground for very dim text */
+export const FEED_FG_DIM = "#4a4e5a";
+
+/** Foreground for separator lines */
+export const FEED_FG_SEPARATOR = "#3a3e4a";
+
+/** Foreground for tool result output */
+export const FEED_FG_TOOL_OUTPUT = "#8a8e9a";
+
+/** Success color (green accent) */
+export const FEED_FG_SUCCESS = "#7BBF8E";
+
+/** Error color (red accent) */
+export const FEED_FG_ERROR = "#CC8080";
+
+/**
+ * Apply background color to a line, padding to full width.
+ * Ensures consistent background coverage across the terminal.
+ *
+ * Replaces full ANSI resets (\x1b[0m) inside content with soft resets
+ * that preserve the background color, so the bg spans the entire line width.
+ */
+export function applyLineBg(content: string, bgHex: string, width: number, contentVisWidth?: number): string {
+  const bg = hexToBgAnsi(bgHex);
+  // Replace full resets inside content with soft reset + bg re-apply
+  // This prevents content's ANSI_RESET from killing the background
+  const safeContent = content.replace(/\x1b\[0m/g, `${ANSI_SOFTRESET}${bg}`);
+  const visW = contentVisWidth ?? visibleWidthSimple(content);
+  const pad = Math.max(0, width - visW);
+  return `${bg}${safeContent}${" ".repeat(pad)}${ANSI_RESET}`;
+}
+
+/**
+ * Simple visible width calculation — strips ANSI codes and measures.
+ * For use in colors.ts without importing from pi-tui (avoids circular deps).
+ */
+function visibleWidthSimple(s: string): number {
+  // Strip ANSI escape sequences
+  const stripped = s.replace(/\x1b\[[^m]*m/g, "");
+  // Count characters (rough — doesn't handle East Asian width)
+  return stripped.length;
+}
