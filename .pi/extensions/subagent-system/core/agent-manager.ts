@@ -162,7 +162,7 @@ export class AgentManager {
   private getAwarenessPrompt(agentId: string, agentType: string): string {
     try {
       const registry = this.getPromptRegistry();
-      const rendered = registry.render("agents/subagent-awareness", {
+      const rendered = registry.render("agents/_subagent-awareness", {
         AGENT_ID: agentId,
         AGENT_TYPE: agentType,
       });

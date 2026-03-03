@@ -82,6 +82,10 @@ export class AgentRegistry {
       const agentPrompts = registry.listByCategory("agents");
 
       for (const promptName of agentPrompts) {
+        // Skip partials (underscore-prefixed templates like _subagent-awareness)
+        const baseName = promptName.replace("agents/", "");
+        if (baseName.startsWith("_")) continue;
+
         try {
           const meta = registry.getMeta(promptName);
 
