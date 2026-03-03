@@ -90,6 +90,11 @@ import { appKey, appKeyHint, editorKey, keyHint, rawKeyHint } from "./components
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
 import { OAuthSelectorComponent } from "./components/oauth-selector.js";
+import {
+	QuestionDialogComponent,
+	type QuestionDialogConfig,
+	type QuestionResult,
+} from "./components/question-dialog.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
@@ -223,6 +228,7 @@ export class InteractiveMode {
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
+	private questionDialog: QuestionDialogComponent | undefined = undefined;
 	private extensionTerminalInputUnsubscribers = new Set<() => void>();
 
 	// Extension widgets (components rendered above/below the editor)
@@ -1203,9 +1209,14 @@ export class InteractiveMode {
 	 * Get a registered tool definition by name (for custom rendering).
 	 */
 	private getRegisteredToolDefinition(toolName: string) {
+		// Check extension-registered tools first
 		const tools = this.session.extensionRunner?.getAllRegisteredTools() ?? [];
 		const registeredTool = tools.find((t) => t.definition.name === toolName);
-		return registeredTool?.definition;
+		if (registeredTool) return registeredTool.definition;
+
+		// Check SDK-level custom tools (e.g., ask_user_question)
+		const customTool = this.session.customToolDefinitions.find((t) => t.name === toolName);
+		return customTool;
 	}
 
 	/**
@@ -1483,6 +1494,7 @@ export class InteractiveMode {
 			select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
+			question: (config) => this.showExtensionQuestion(config),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
@@ -1660,6 +1672,47 @@ export class InteractiveMode {
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
 		this.extensionInput = undefined;
+		this.ui.setFocus(this.editor);
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Show a structured question dialog for extensions.
+	 */
+	private showExtensionQuestion(config: QuestionDialogConfig): Promise<QuestionResult> {
+		return new Promise((resolve) => {
+			if (config.signal?.aborted) {
+				resolve({ answers: [], completed: false });
+				return;
+			}
+
+			const onAbort = () => {
+				this.hideExtensionQuestion();
+				resolve({ answers: [], completed: false });
+			};
+			config.signal?.addEventListener("abort", onAbort, { once: true });
+
+			this.questionDialog = new QuestionDialogComponent(config, theme, this.ui, (result) => {
+				config.signal?.removeEventListener("abort", onAbort);
+				this.hideExtensionQuestion();
+				resolve(result);
+			});
+
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.questionDialog);
+			this.ui.setFocus(this.questionDialog);
+			this.ui.requestRender();
+		});
+	}
+
+	/**
+	 * Hide the question dialog.
+	 */
+	private hideExtensionQuestion(): void {
+		this.questionDialog?.dispose();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.questionDialog = undefined;
 		this.ui.setFocus(this.editor);
 		this.ui.requestRender();
 	}

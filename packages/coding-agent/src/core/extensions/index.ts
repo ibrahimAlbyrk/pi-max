@@ -94,6 +94,12 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
+	QuestionAnswer,
+	QuestionDialogConfig,
+	QuestionMode,
+	QuestionOption,
+	QuestionPage,
+	QuestionResult,
 	ReadToolCallEvent,
 	ReadToolResultEvent,
 	// Commands

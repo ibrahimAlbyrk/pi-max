@@ -18,6 +18,7 @@ import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
+	QuestionResult,
 } from "../../core/extensions/index.js";
 import { type Theme, theme } from "../interactive/theme/theme.js";
 import type {
@@ -132,6 +133,23 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 			createDialogPromise(opts, undefined, { method: "input", title, placeholder, timeout: opts?.timeout }, (r) =>
 				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
 			),
+
+		async question(config): Promise<QuestionResult> {
+			// RPC mode: send question config as a dialog request, get result back
+			const defaultResult: QuestionResult = { answers: [], completed: false };
+			const result = await createDialogPromise(
+				{ signal: config.signal, timeout: config.timeout },
+				defaultResult,
+				{ method: "question", ...config },
+				(r) => {
+					if ("answers" in r && "completed" in r) {
+						return r as unknown as QuestionResult;
+					}
+					return defaultResult;
+				},
+			);
+			return result;
+		},
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {
 			// Fire and forget - no response needed

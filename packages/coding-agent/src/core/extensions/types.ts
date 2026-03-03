@@ -38,6 +38,7 @@ import type {
 	TUI,
 } from "@mariozechner/pi-tui";
 import type { Static, TSchema } from "@sinclair/typebox";
+import type { QuestionDialogConfig, QuestionResult } from "../../modes/interactive/components/question-dialog.js";
 import type { Theme } from "../../modes/interactive/theme/theme.js";
 import type { BashResult } from "../bash-executor.js";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.js";
@@ -74,6 +75,14 @@ import type {
 
 export type { ExecOptions, ExecResult } from "../exec.js";
 export type { AgentToolResult, AgentToolUpdateCallback };
+export type {
+	QuestionAnswer,
+	QuestionDialogConfig,
+	QuestionMode,
+	QuestionOption,
+	QuestionPage,
+	QuestionResult,
+} from "../../modes/interactive/components/question-dialog.js";
 export type { AppAction, KeybindingsManager } from "../keybindings.js";
 
 // ============================================================================
@@ -113,6 +122,13 @@ export interface ExtensionUIContext {
 
 	/** Show a text input dialog. */
 	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+
+	/**
+	 * Show a structured question dialog with one or more pages.
+	 * Each page can be single-select, multi-select, text input, or confirm.
+	 * Multi-page dialogs show a tab bar with navigation.
+	 */
+	question(config: QuestionDialogConfig): Promise<QuestionResult>;
 
 	/** Show a notification to the user. */
 	notify(message: string, type?: "info" | "warning" | "error"): void;
