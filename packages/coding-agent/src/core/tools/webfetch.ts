@@ -140,6 +140,7 @@ export function createWebfetchTool(): AgentTool<typeof webfetchSchema> {
 	return {
 		name: "webfetch",
 		label: "webfetch",
+		sideEffects: false,
 		description: `Fetch a web page and return its content as clean markdown. Strips navigation, ads, and boilerplate. Supports CSS selectors to extract specific sections. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		parameters: webfetchSchema,
 		execute: async (_toolCallId: string, { url, selector, raw, limit }: WebfetchToolInput, signal?: AbortSignal) => {
