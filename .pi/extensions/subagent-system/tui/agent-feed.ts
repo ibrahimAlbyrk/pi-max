@@ -140,7 +140,7 @@ export function processAgentEvent(buffer: AgentFeedBuffer, event: AgentEvent): v
     case "tool:end": {
       const e = event as AgentToolEndEvent;
       if (e.result && e.result.trim()) {
-        buffer.push({ type: "tool_result", timestamp: ts, content: truncateResult(e.result, 5) });
+        buffer.push({ type: "tool_result", timestamp: ts, content: truncateResult(e.result, 20) });
       }
       break;
     }

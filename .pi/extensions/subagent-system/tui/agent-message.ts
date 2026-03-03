@@ -20,7 +20,7 @@ import * as os from "node:os";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import type { AgentManager } from "../core/agent-manager.js";
-import { AGENT_COLOR_PALETTE, ANSI_DIM, ANSI_BOLD, ANSI_RESET, ANSI_SOFTRESET } from "./colors.js";
+import { AGENT_COLOR_PALETTE, ANSI_DIM, ANSI_BOLD, ANSI_RESET, ANSI_SOFTRESET, FEED_FG_MUTED } from "./colors.js";
 
 /**
  * Soft reset for use INSIDE content lines — clears bold/dim/italic/fg
@@ -402,13 +402,13 @@ export function registerMessageRenderers(pi: ExtensionAPI, _manager: AgentManage
     const items: any[] = d?.items || [];
 
     const colorInfo = getColorInfo(agentColor);
-    const dimFgHex = dimHex(colorInfo.fg);
+    const mutedFg = fgAnsi(FEED_FG_MUTED);
 
     const toolLines: string[] = [];
     for (const item of items) {
       if (item.type === "tool" && item.toolName) {
         const line = formatToolLine(item.toolName, item.args);
-        toolLines.push(`${fgAnsi(dimFgHex)}→${R} ${ANSI_DIM}${line}${R}`);
+        toolLines.push(`${mutedFg}${line}${R}`);
       }
     }
 

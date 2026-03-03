@@ -36,6 +36,14 @@ import {
   ANSI_DIM,
   ANSI_BOLD,
   ANSI_ITALIC,
+  FEED_BG_TOOL,
+  FEED_BG_USER,
+  FEED_BG_HEADER,
+  FEED_FG_MUTED,
+  FEED_FG_SEPARATOR,
+  FEED_FG_TOOL_OUTPUT,
+  FEED_FG_SUCCESS,
+  applyLineBg,
 } from "./colors.js";
 
 // ─── Constants ────────────────────────────────────────────────────────
@@ -628,10 +636,11 @@ export class AgentChannelManager {
     const termHeight = process.stdout.rows || DEFAULT_HEIGHT;
     const colorInfo = AGENT_COLOR_PALETTE.find((c) => c.name === channel.color) || AGENT_COLOR_PALETTE[0];
     const fg = hexToAnsi(colorInfo.fg);
-    const bg = hexToBgAnsi(colorInfo.bg);
+    const sepFg = hexToAnsi(FEED_FG_SEPARATOR);
+    const mutedFg = hexToAnsi(FEED_FG_MUTED);
     const lines: string[] = [];
 
-    // Header
+    // ── Header: clean single line with subtle background ──
     const statusIcon = getStatusIcon(channel.lastStatus);
     const usage = channel.usage;
     const up: string[] = [];
@@ -639,18 +648,20 @@ export class AgentChannelManager {
     if (usage.input > 0) up.push(`↑${fmtTok(usage.input)}`);
     if (usage.output > 0) up.push(`↓${fmtTok(usage.output)}`);
     if (usage.cost > 0) up.push(`$${usage.cost.toFixed(4)}`);
-    const usageStr = up.join(" · ");
-    const hL = ` ${statusIcon} ${channel.name} · ${channel.lastStatus}`;
-    const hR = usageStr ? `${usageStr} ` : "";
-    const hPad = Math.max(1, width - visibleWidth(hL) - visibleWidth(hR));
-    lines.push(`${bg}${fg}${ANSI_BOLD}${hL}${ANSI_RESET}${bg}${" ".repeat(hPad)}${fg}${ANSI_DIM}${hR}${ANSI_RESET}`);
-    lines.push(`${fg}${"─".repeat(width)}${ANSI_RESET}`);
+    const usageStr = up.join("  ");
+    const hLeft = `  ${statusIcon} ${ANSI_BOLD}${channel.name}${ANSI_RESET}${hexToBgAnsi(FEED_BG_HEADER)}${fg}  ${ANSI_DIM}${channel.lastStatus}${ANSI_RESET}${hexToBgAnsi(FEED_BG_HEADER)}`;
+    const hRight = usageStr ? `${mutedFg}${usageStr}  ` : "";
+    const hLeftVis = 2 + 1 + 1 + channel.name.length + 2 + channel.lastStatus.length;
+    const hRightVis = usageStr ? stripAnsi(hRight).length : 0;
+    const hPad = Math.max(1, width - hLeftVis - hRightVis);
+    lines.push(applyLineBg(`${fg}${hLeft}${" ".repeat(hPad)}${hRight}`, FEED_BG_HEADER, width, width));
+    lines.push(`${sepFg}${"─".repeat(width)}${ANSI_RESET}`);
 
-    // Content
+    // ── Content ──
     const entries = channel.buffer.getEntries();
     const allContent: string[] = [];
     for (const entry of entries) {
-      const entryLines = this.renderEntry(entry, width - 2, colorInfo.fg);
+      const entryLines = this.renderEntry(entry, width, colorInfo.fg);
       for (const line of entryLines) allContent.push(truncateToWidth(line, width));
     }
     if (allContent.length === 0) allContent.push(`  ${ANSI_DIM}Waiting for activity…${ANSI_RESET}`);
@@ -658,21 +669,17 @@ export class AgentChannelManager {
     // Store actual content line count for scroll()'s initial position estimate
     this.lastRenderedContentCount = allContent.length;
 
-    // Viewport — clamping and snap-to-bottom happen HERE with real data
+    // ── Viewport — clamping and snap-to-bottom ──
     const contentHeight = Math.max(1, termHeight - CHROME_LINES);
     const total = allContent.length;
     const maxOffset = Math.max(0, total - contentHeight);
     let viewStart: number;
 
     if (this.scrollOffset === -1 || !this.userScrolled) {
-      // Auto-scroll: follow bottom
       viewStart = maxOffset;
     } else {
-      // User scrolled: clamp to valid range
       viewStart = Math.min(this.scrollOffset, maxOffset);
-      this.scrollOffset = viewStart; // correct stored offset to clamped value
-
-      // If we've reached the bottom, snap back to auto-scroll
+      this.scrollOffset = viewStart;
       if (viewStart >= maxOffset && maxOffset > 0) {
         this.scrollOffset = -1;
         this.userScrolled = false;
@@ -685,16 +692,11 @@ export class AgentChannelManager {
     while (visible.length < contentHeight) visible.push("");
     lines.push(...visible);
 
-    // Input area
+    // ── Input area ──
     const inputAgentActive = channel.lastStatus === "working" || channel.lastStatus === "thinking" || channel.lastStatus === "idle";
     if (inputAgentActive) {
-      lines.push(`${fg}${"─".repeat(width)}${ANSI_RESET}`);
+      lines.push(`${sepFg}${"─".repeat(width)}${ANSI_RESET}`);
       const prompt = `${fg}❯${ANSI_RESET} `;
-      const maxInputWidth = Math.max(10, width - 4);
-      const displayText = this.inputBuffer.length > 0
-        ? this.inputBuffer
-        : `${ANSI_DIM}Type message to ${channel.name}… (Enter to send)${ANSI_RESET}`;
-      // Show cursor position
       let inputLine: string;
       if (this.inputBuffer.length > 0) {
         const before = this.inputBuffer.slice(0, this.inputCursor);
@@ -702,17 +704,17 @@ export class AgentChannelManager {
         const after = this.inputCursor < this.inputBuffer.length ? this.inputBuffer.slice(this.inputCursor + 1) : "";
         inputLine = `${prompt}${before}\x1b[7m${cursorChar}\x1b[27m${after}`;
       } else {
-        inputLine = `${prompt}${displayText}`;
+        inputLine = `${prompt}${ANSI_DIM}Type message to ${channel.name}… (Enter to send)${ANSI_RESET}`;
       }
       lines.push(inputLine);
     } else {
-      lines.push(`${fg}${"─".repeat(width)}${ANSI_RESET}`);
+      lines.push(`${sepFg}${"─".repeat(width)}${ANSI_RESET}`);
       lines.push(`  ${ANSI_DIM}Agent ${channel.lastStatus} — read only${ANSI_RESET}`);
     }
 
-    // Footer
-    lines.push(`${fg}${"─".repeat(width)}${ANSI_RESET}`);
-    const tabParts: string[] = [`${ANSI_DIM} Main ${ANSI_RESET}`];
+    // ── Footer: clean tab bar ──
+    lines.push(`${sepFg}${"─".repeat(width)}${ANSI_RESET}`);
+    const tabParts: string[] = [];
     for (const chId of this.channelOrder) {
       const ch = this.channels.get(chId);
       if (!ch) continue;
@@ -720,20 +722,19 @@ export class AgentChannelManager {
       const cFg = hexToAnsi(cI.fg);
       const icon = getStatusIcon(ch.lastStatus);
       if (chId === this.activeChannel) {
-        tabParts.push(`${cFg}${ANSI_BOLD}[${icon} ${ch.name}]${ANSI_RESET}`);
+        tabParts.push(`${cFg}${ANSI_BOLD} ${icon} ${ch.name} ${ANSI_RESET}`);
       } else {
-        tabParts.push(`${cFg}${ANSI_DIM} ${icon} ${ch.name} ${ANSI_RESET}`);
+        tabParts.push(`${ANSI_DIM} ${icon} ${ch.name} ${ANSI_RESET}`);
       }
     }
     const scrollInfo = total > contentHeight
-      ? `${ANSI_DIM}[${viewStart + 1}-${Math.min(viewEnd, total)}/${total}]${ANSI_RESET}` : "";
-    const helpText = `${ANSI_DIM}Shift+↓:back  Tab:switch  PgUp/Dn:scroll  Enter:send${ANSI_RESET}`;
+      ? `${ANSI_DIM}${viewStart + 1}-${Math.min(viewEnd, total)}/${total}${ANSI_RESET}` : "";
+    const helpText = `${ANSI_DIM}Shift+↓:back  Tab:next${ANSI_RESET}`;
     const rSide = scrollInfo ? `${scrollInfo}  ${helpText}` : helpText;
-    const tabBar = tabParts.join(" ");
+    const tabBar = tabParts.join(`${ANSI_DIM}·${ANSI_RESET}`);
     const tabBarVis = stripAnsi(tabBar).length;
     const rSideVis = stripAnsi(rSide).length;
     const fPad = Math.max(1, width - tabBarVis - rSideVis);
-    // Safety: if tab bar + rSide overflows, truncate tab bar to fit
     if (tabBarVis + 1 + rSideVis > width) {
       lines.push(truncateToWidth(`${tabBar} ${rSide}`, width));
     } else {
@@ -745,63 +746,68 @@ export class AgentChannelManager {
 
   // ─── Entry Rendering ───────────────────────────────────────────
 
-  private renderEntry(entry: FeedEntry, maxWidth: number, colorHex: string): string[] {
+  private renderEntry(entry: FeedEntry, width: number, colorHex: string): string[] {
     const fg = hexToAnsi(colorHex);
-    const time = formatTime(entry.timestamp);
-    const timeStr = `${ANSI_DIM}${time}${ANSI_RESET}`;
-    const indent = "          ";
+    const mutedFg = hexToAnsi(FEED_FG_MUTED);
+    const sepFg = hexToAnsi(FEED_FG_SEPARATOR);
+    const toolOutFg = hexToAnsi(FEED_FG_TOOL_OUTPUT);
+    const pad = "  "; // consistent left padding
+    const innerWidth = Math.max(20, width - 4);
 
     switch (entry.type) {
       case "system_prompt": {
-        const label = `── System Prompt `;
-        const dashes = "─".repeat(Math.max(0, maxWidth - label.length - 12));
-        const header = ` ${timeStr}  ${fg}${label}${dashes}${ANSI_RESET}`;
-        const mw = Math.max(20, maxWidth - 14);
+        // Plain system prompt — no background, like main context
+        const result: string[] = [];
+        result.push(`${pad}${mutedFg}${ANSI_BOLD}System Prompt${ANSI_RESET}`);
         const promptLines = entry.content.split("\n");
-        const result: string[] = ["", header];
         for (const line of promptLines) {
-          const wrapped = wrapTextWithAnsi(line, mw);
+          const wrapped = wrapTextWithAnsi(line, innerWidth);
           for (const w of wrapped) {
-            result.push(` ${indent}  ${ANSI_DIM}${w}${ANSI_RESET}`);
+            result.push(`${pad}${ANSI_DIM}${w}${ANSI_RESET}`);
           }
         }
         result.push("");
         return result;
       }
+
       case "task": {
-        const label = `── Task `;
-        const dashes = "─".repeat(Math.max(0, maxWidth - label.length - 12));
-        const header = ` ${timeStr}  ${fg}${label}${dashes}${ANSI_RESET}`;
-        const mw = Math.max(20, maxWidth - 14);
+        // Plain task block — no background
+        const result: string[] = [];
+        result.push(`${pad}${fg}${ANSI_BOLD}Task${ANSI_RESET}`);
         const taskLines = entry.content.split("\n");
-        const result: string[] = ["", header];
         for (const line of taskLines) {
-          const wrapped = wrapTextWithAnsi(line, mw);
+          const wrapped = wrapTextWithAnsi(line, innerWidth);
           for (const w of wrapped) {
-            result.push(` ${indent}  ${w}`);
+            result.push(`${pad}${w}`);
           }
         }
         result.push("");
         return result;
       }
-      case "status":
-        return [truncateToWidth(` ${timeStr}  ${entry.content}`, maxWidth + 2)];
-      case "turn": {
-        const label = `── ${entry.content} `;
-        const dashes = "─".repeat(Math.max(0, maxWidth - label.length - 12));
-        return ["", ` ${timeStr}  ${fg}${label}${dashes}${ANSI_RESET}`];
+
+      case "status": {
+        // Clean inline status — no timestamp
+        return [`${pad}${mutedFg}${entry.content}${ANSI_RESET}`];
       }
+
+      case "turn": {
+        // Clean turn separator — subtle line with turn label
+        const label = entry.content;
+        const sepLen = Math.max(0, width - label.length - 6);
+        return [
+          "",
+          `${pad}${sepFg}───${ANSI_RESET} ${fg}${label}${ANSI_RESET} ${sepFg}${"─".repeat(sepLen)}${ANSI_RESET}`,
+        ];
+      }
+
       case "thinking": {
+        // Subtle italic thinking — no emoji, no timestamp
         const text = entry.content.replace(/\s+/g, " ").trim();
         if (!text) return [];
-        const mw = Math.max(20, maxWidth - 14);
-        const wrapped = wrapTextWithAnsi(text, mw);
+        const wrapped = wrapTextWithAnsi(text, innerWidth);
         const result: string[] = [];
-        for (let i = 0; i < wrapped.length; i++) {
-          const pfx = i === 0
-            ? ` ${timeStr}  ${ANSI_DIM}${ANSI_ITALIC}💭 `
-            : ` ${indent}     ${ANSI_DIM}${ANSI_ITALIC}`;
-          result.push(`${pfx}${wrapped[i]}${ANSI_RESET}`);
+        for (const w of wrapped) {
+          result.push(`${pad}${ANSI_DIM}${ANSI_ITALIC}${w}${ANSI_RESET}`);
         }
         if (entry.streaming && result.length > 0) {
           result[result.length - 1] = result[result.length - 1].replace(
@@ -810,17 +816,21 @@ export class AgentChannelManager {
         }
         return result;
       }
+
       case "message": {
+        // Clean message text — no emoji, natural flow
         const text = entry.content.trim();
         if (!text) return [];
-        const mw = Math.max(20, maxWidth - 14);
         const msgLines = text.split("\n");
         const result: string[] = [];
-        for (let i = 0; i < msgLines.length; i++) {
-          const wrapped = wrapTextWithAnsi(msgLines[i], mw);
-          for (let j = 0; j < wrapped.length; j++) {
-            if (i === 0 && j === 0) result.push(` ${timeStr}  💬 ${wrapped[j]}`);
-            else result.push(` ${indent}     ${wrapped[j]}`);
+        for (const line of msgLines) {
+          if (line === "") {
+            result.push("");
+            continue;
+          }
+          const wrapped = wrapTextWithAnsi(line, innerWidth);
+          for (const w of wrapped) {
+            result.push(`${pad}${w}`);
           }
         }
         if (entry.streaming && result.length > 0) {
@@ -828,67 +838,73 @@ export class AgentChannelManager {
         }
         return result;
       }
+
       case "tool_call": {
+        // Tool call header with background — like main context ToolExecutionComponent
         const tcLines = entry.content.split("\n");
-        const mw = Math.max(20, maxWidth - 14);
         const result: string[] = [];
-        for (let i = 0; i < tcLines.length; i++) {
-          const prefix = i === 0
-            ? ` ${timeStr}  ${fg}`
-            : ` ${indent}  ${fg}`;
-          result.push(`${prefix}${truncateToWidth(tcLines[i], mw)}${ANSI_RESET}`);
+        result.push(applyLineBg(`${pad}${fg}${ANSI_BOLD}${tcLines[0]}${ANSI_RESET}`, FEED_BG_TOOL, width));
+        // Additional lines (multi-line tool calls like bash with long commands)
+        for (let i = 1; i < tcLines.length; i++) {
+          result.push(applyLineBg(`${pad}${toolOutFg}${truncateToWidth(tcLines[i], innerWidth)}${ANSI_RESET}`, FEED_BG_TOOL, width));
         }
         return result;
       }
+
       case "tool_result": {
+        // Tool result — plain dimmed text, no background
         const rl = entry.content.split("\n");
-        return rl.map((l) => ` ${indent}  ${ANSI_DIM}│ ${truncateToWidth(l, Math.max(10, maxWidth - 14))}${ANSI_RESET}`);
+        const result: string[] = [];
+        for (const l of rl) {
+          result.push(`${pad}${ANSI_DIM}${truncateToWidth(l, innerWidth)}${ANSI_RESET}`);
+        }
+        return result;
       }
+
       case "user_message": {
+        // User message — subtle background like main context UserMessageComponent
         const text = entry.content.trim();
         if (!text) return [];
-        const mw = Math.max(20, maxWidth - 14);
-        const msgLines = text.split("\n");
         const result: string[] = [];
-        const userColor = "\x1b[38;2;120;180;255m"; // light blue for user messages
-        for (let i = 0; i < msgLines.length; i++) {
-          const wrapped = wrapTextWithAnsi(msgLines[i], mw);
-          for (let j = 0; j < wrapped.length; j++) {
-            if (i === 0 && j === 0) result.push(` ${timeStr}  ${userColor}📩 [user]${ANSI_RESET} ${wrapped[j]}`);
-            else result.push(` ${indent}     ${wrapped[j]}`);
+        const msgLines = text.split("\n");
+        for (const line of msgLines) {
+          const wrapped = wrapTextWithAnsi(line, innerWidth);
+          for (const w of wrapped) {
+            result.push(applyLineBg(`${pad}${w}${ANSI_RESET}`, FEED_BG_USER, width));
           }
         }
         return result;
       }
+
       case "agent_message_sent": {
         const target = entry.agentName || "?";
         const text = entry.content.trim();
         if (!text) return [];
-        const mw = Math.max(20, maxWidth - 20);
-        const wrapped = wrapTextWithAnsi(text, mw);
+        const wrapped = wrapTextWithAnsi(text, Math.max(20, innerWidth - target.length - 6));
         const result: string[] = [];
         for (let i = 0; i < wrapped.length; i++) {
-          if (i === 0) result.push(` ${timeStr}  ${fg}📨 [→ ${target}]${ANSI_RESET} ${wrapped[i]}`);
-          else result.push(` ${indent}     ${wrapped[i]}`);
+          if (i === 0) result.push(`${pad}${fg}${ANSI_BOLD}→ ${target}${ANSI_RESET}  ${wrapped[i]}`);
+          else result.push(`${pad}${"  ".repeat(target.length + 3)}${wrapped[i]}`);
         }
         return result;
       }
+
       case "agent_message_received": {
         const source = entry.agentName || "?";
         const text = entry.content.trim();
         if (!text) return [];
-        const mw = Math.max(20, maxWidth - 20);
-        const wrapped = wrapTextWithAnsi(text, mw);
+        const wrapped = wrapTextWithAnsi(text, Math.max(20, innerWidth - source.length - 6));
         const result: string[] = [];
-        const recvColor = "\x1b[38;2;180;220;120m"; // light green for received
+        const recvFg = hexToAnsi(FEED_FG_SUCCESS);
         for (let i = 0; i < wrapped.length; i++) {
-          if (i === 0) result.push(` ${timeStr}  ${recvColor}📩 [← ${source}]${ANSI_RESET} ${wrapped[i]}`);
-          else result.push(` ${indent}     ${wrapped[i]}`);
+          if (i === 0) result.push(`${pad}${recvFg}${ANSI_BOLD}← ${source}${ANSI_RESET}  ${wrapped[i]}`);
+          else result.push(`${pad}${"  ".repeat(source.length + 3)}${wrapped[i]}`);
         }
         return result;
       }
+
       default:
-        return [` ${timeStr}  ${entry.content}`];
+        return [`${pad}${entry.content}`];
     }
   }
 }
@@ -929,11 +945,6 @@ class InvisibleInputCapture implements Focusable {
 
 // ─── Utilities ────────────────────────────────────────────────────────
 
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
-}
-function p2(n: number): string { return n < 10 ? `0${n}` : String(n); }
 function fmtTok(n: number): string {
   if (n < 1000) return String(n);
   if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
