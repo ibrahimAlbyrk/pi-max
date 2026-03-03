@@ -95,6 +95,14 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Use this for follow-up messages that should wait until the agent finishes.
 	 */
 	getFollowUpMessages?: () => Promise<AgentMessage[]>;
+
+	/**
+	 * Maximum number of tool calls to execute in parallel.
+	 * Only applies to tools without side effects (sideEffects !== true).
+	 * Tools with side effects always execute sequentially.
+	 * Set to 1 to disable parallel execution. Default: 5.
+	 */
+	maxParallelTools?: number;
 }
 
 /**
@@ -157,6 +165,8 @@ export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
 	// A human-readable label for the tool to be displayed in UI
 	label: string;
+	/** Whether this tool has side effects (writes files, runs commands). Default: true (safe fallback). */
+	sideEffects?: boolean;
 	execute: (
 		toolCallId: string,
 		params: Static<TParameters>,

@@ -160,6 +160,7 @@ async function runLoop(
 					signal,
 					stream,
 					config.getSteeringMessages,
+					config.maxParallelTools,
 				);
 				toolResults.push(...toolExecution.toolResults);
 				steeringAfterTools = toolExecution.steeringMessages ?? null;
@@ -289,7 +290,142 @@ async function streamAssistantResponse(
 }
 
 /**
+ * A group of tool calls that can be executed together.
+ * Parallel groups run all calls concurrently; sequential groups run one at a time.
+ */
+type ToolCallGroup = {
+	calls: Extract<AssistantMessage["content"][number], { type: "toolCall" }>[];
+	parallel: boolean;
+};
+
+/**
+ * Group tool calls into parallel (read-only) and sequential (side-effect) batches.
+ * Consecutive read-only tools form a parallel group; each side-effect tool is its own sequential group.
+ * Tools with sideEffects undefined default to true (safe fallback for unknown/extension tools).
+ */
+function groupToolCalls(
+	toolCalls: Extract<AssistantMessage["content"][number], { type: "toolCall" }>[],
+	tools: AgentTool<any>[] | undefined,
+): ToolCallGroup[] {
+	const groups: ToolCallGroup[] = [];
+	let currentReadOnly: typeof toolCalls = [];
+
+	for (const tc of toolCalls) {
+		const tool = tools?.find((t) => t.name === tc.name);
+		// Default to true (has side effects) for unknown tools — safe fallback
+		const hasSideEffects = tool?.sideEffects !== false;
+
+		if (hasSideEffects) {
+			if (currentReadOnly.length > 0) {
+				groups.push({ calls: currentReadOnly, parallel: true });
+				currentReadOnly = [];
+			}
+			groups.push({ calls: [tc], parallel: false });
+		} else {
+			currentReadOnly.push(tc);
+		}
+	}
+
+	if (currentReadOnly.length > 0) {
+		groups.push({ calls: currentReadOnly, parallel: true });
+	}
+
+	return groups;
+}
+
+/**
+ * Execute a single tool call, emitting start/update/end events.
+ */
+async function executeSingleToolCall(
+	toolCall: Extract<AssistantMessage["content"][number], { type: "toolCall" }>,
+	tools: AgentTool<any>[] | undefined,
+	signal: AbortSignal | undefined,
+	stream: EventStream<AgentEvent, AgentMessage[]>,
+): Promise<ToolResultMessage> {
+	const tool = tools?.find((t) => t.name === toolCall.name);
+
+	stream.push({
+		type: "tool_execution_start",
+		toolCallId: toolCall.id,
+		toolName: toolCall.name,
+		args: toolCall.arguments,
+	});
+
+	let result: AgentToolResult<any>;
+	let isError = false;
+
+	try {
+		if (!tool) throw new Error(`Tool ${toolCall.name} not found`);
+
+		const validatedArgs = validateToolArguments(tool, toolCall);
+
+		result = await tool.execute(toolCall.id, validatedArgs, signal, (partialResult) => {
+			stream.push({
+				type: "tool_execution_update",
+				toolCallId: toolCall.id,
+				toolName: toolCall.name,
+				args: toolCall.arguments,
+				partialResult,
+			});
+		});
+	} catch (e) {
+		result = {
+			content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
+			details: {},
+		};
+		isError = true;
+	}
+
+	stream.push({
+		type: "tool_execution_end",
+		toolCallId: toolCall.id,
+		toolName: toolCall.name,
+		result,
+		isError,
+	});
+
+	const toolResultMessage: ToolResultMessage = {
+		role: "toolResult",
+		toolCallId: toolCall.id,
+		toolName: toolCall.name,
+		content: result.content,
+		details: result.details,
+		isError,
+		timestamp: Date.now(),
+	};
+
+	stream.push({ type: "message_start", message: toolResultMessage });
+	stream.push({ type: "message_end", message: toolResultMessage });
+
+	return toolResultMessage;
+}
+
+/**
+ * Execute tool calls with concurrency limit using a worker pool pattern.
+ */
+async function executeWithConcurrencyLimit<T>(
+	items: T[],
+	concurrency: number,
+	fn: (item: T) => Promise<void>,
+): Promise<void> {
+	const limit = Math.max(1, Math.min(concurrency, items.length));
+	let nextIndex = 0;
+
+	const workers = Array.from({ length: limit }, async () => {
+		while (nextIndex < items.length) {
+			const current = nextIndex++;
+			if (current < items.length) {
+				await fn(items[current]);
+			}
+		}
+	});
+
+	await Promise.all(workers);
+}
+
+/**
  * Execute tool calls from an assistant message.
+ * Groups consecutive read-only tools for parallel execution; side-effect tools run sequentially.
  */
 async function executeToolCalls(
 	tools: AgentTool<any>[] | undefined,
@@ -297,80 +433,70 @@ async function executeToolCalls(
 	signal: AbortSignal | undefined,
 	stream: EventStream<AgentEvent, AgentMessage[]>,
 	getSteeringMessages?: AgentLoopConfig["getSteeringMessages"],
+	maxParallelTools?: number,
 ): Promise<{ toolResults: ToolResultMessage[]; steeringMessages?: AgentMessage[] }> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
+	const concurrency = Math.max(1, maxParallelTools ?? 5);
+	const groups = groupToolCalls(toolCalls, tools);
+
 	const results: ToolResultMessage[] = [];
 	let steeringMessages: AgentMessage[] | undefined;
 
-	for (let index = 0; index < toolCalls.length; index++) {
-		const toolCall = toolCalls[index];
-		const tool = tools?.find((t) => t.name === toolCall.name);
+	// Track how many tool calls we've processed for skipping on steering
+	let processedCount = 0;
 
-		stream.push({
-			type: "tool_execution_start",
-			toolCallId: toolCall.id,
-			toolName: toolCall.name,
-			args: toolCall.arguments,
-		});
+	for (const group of groups) {
+		if (steeringMessages) break;
 
-		let result: AgentToolResult<any>;
-		let isError = false;
+		if (group.parallel && group.calls.length > 1 && concurrency > 1) {
+			// Parallel execution for read-only tools
+			const groupResults: ToolResultMessage[] = new Array(group.calls.length);
 
-		try {
-			if (!tool) throw new Error(`Tool ${toolCall.name} not found`);
+			await executeWithConcurrencyLimit(
+				group.calls.map((call, index) => ({ call, index })),
+				concurrency,
+				async ({ call, index }) => {
+					groupResults[index] = await executeSingleToolCall(call, tools, signal, stream);
+				},
+			);
 
-			const validatedArgs = validateToolArguments(tool, toolCall);
+			results.push(...groupResults);
+			processedCount += group.calls.length;
+		} else {
+			// Sequential execution for side-effect tools or single-item groups
+			for (const toolCall of group.calls) {
+				if (steeringMessages) break;
 
-			result = await tool.execute(toolCall.id, validatedArgs, signal, (partialResult) => {
-				stream.push({
-					type: "tool_execution_update",
-					toolCallId: toolCall.id,
-					toolName: toolCall.name,
-					args: toolCall.arguments,
-					partialResult,
-				});
-			});
-		} catch (e) {
-			result = {
-				content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
-				details: {},
-			};
-			isError = true;
+				const toolResult = await executeSingleToolCall(toolCall, tools, signal, stream);
+				results.push(toolResult);
+				processedCount++;
+
+				// Check for steering messages after each sequential tool
+				if (getSteeringMessages) {
+					const steering = await getSteeringMessages();
+					if (steering.length > 0) {
+						steeringMessages = steering;
+						break;
+					}
+				}
+			}
 		}
 
-		stream.push({
-			type: "tool_execution_end",
-			toolCallId: toolCall.id,
-			toolName: toolCall.name,
-			result,
-			isError,
-		});
-
-		const toolResultMessage: ToolResultMessage = {
-			role: "toolResult",
-			toolCallId: toolCall.id,
-			toolName: toolCall.name,
-			content: result.content,
-			details: result.details,
-			isError,
-			timestamp: Date.now(),
-		};
-
-		results.push(toolResultMessage);
-		stream.push({ type: "message_start", message: toolResultMessage });
-		stream.push({ type: "message_end", message: toolResultMessage });
-
-		// Check for steering messages - skip remaining tools if user interrupted
-		if (getSteeringMessages) {
+		// Check for steering messages after each group
+		if (!steeringMessages && getSteeringMessages) {
 			const steering = await getSteeringMessages();
 			if (steering.length > 0) {
 				steeringMessages = steering;
-				const remainingCalls = toolCalls.slice(index + 1);
-				for (const skipped of remainingCalls) {
-					results.push(skipToolCall(skipped, stream));
-				}
-				break;
 			}
+		}
+	}
+
+	// Skip remaining tool calls if steering interrupted
+	if (steeringMessages) {
+		const allToolCalls = groups.flatMap((g) => g.calls);
+		const remainingCalls = allToolCalls.slice(processedCount);
+		for (const skipped of remainingCalls) {
+			results.push(skipToolCall(skipped, stream));
 		}
 	}
 
