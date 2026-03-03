@@ -42,7 +42,6 @@ import { taskRenderResult } from "./rendering/result-renderer.js";
 import { registerTasksCommand } from "./commands/tasks-command.js";
 import { registerTaskDetailCommand } from "./commands/task-detail-command.js";
 import { registerBoardCommand } from "./commands/board-command.js";
-import { registerTreeCommand } from "./commands/tree-command.js";
 import { registerSprintCommand } from "./commands/sprint-command.js";
 import { registerExportCommand } from "./commands/export-command.js";
 import { registerImportCommand } from "./commands/import-command.js";
@@ -530,7 +529,6 @@ Examples:
 	registerTasksCommand(pi, getStore);
 	registerTaskDetailCommand(pi, getStore);
 	registerBoardCommand(pi as any, getStore, onUIMutate);
-	registerTreeCommand(pi, getStore);
 	registerSprintCommand(pi, getStore);
 	registerExportCommand(pi, getStore);
 	registerImportCommand(pi, getStore, onUIMutate);
