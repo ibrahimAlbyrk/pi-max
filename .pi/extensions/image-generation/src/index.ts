@@ -1,37 +1,30 @@
 /**
- * Image Generation Extension (Nano Banana / Gemini Image)
+ * Image Generation Extension — Multi-Provider
  *
- * Generates and edits images via Google's Gemini image models (Nano Banana).
- * Images are displayed inline via renderResult (details only, not sent to LLM).
- * Requires GEMINI_API_KEY environment variable.
+ * Generates and edits images using multiple AI providers.
+ * Images are displayed as separate conversation messages (not inside tool box).
+ * Images are filtered from LLM context via the "context" event.
  *
- * Models:
- *   gemini-3.1-flash-image-preview  (Nano Banana 2) — Fast, best price/quality (default)
- *   gemini-3-pro-image-preview      (Nano Banana Pro) — Highest quality, 4K
- *   gemini-2.5-flash-image          (Nano Banana v1) — Fastest, cheapest, max 1K
- *
- * Usage:
- *   "Generate a pixel art fireball sprite and save it to assets/fireball.png"
- *   "Edit this image to remove the background" (with image_path)
+ * Providers (auto-detected from env vars):
+ *   gemini    — Nano Banana (GEMINI_API_KEY)
+ *   openai    — gpt-image-1 (OPENAI_API_KEY)
+ *   flux      — FLUX Pro via fal.ai (FAL_KEY)
+ *   stability — Stable Diffusion 3 (STABILITY_API_KEY)
  *
  * Environment variables:
- *   GEMINI_API_KEY       — Required. Google AI API key.
- *   PI_IMAGE_MODEL       — Default model override.
+ *   PI_IMAGE_PROVIDER  — Force a specific provider (optional)
  */
 
-import { GoogleGenAI } from "@google/genai";
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Container, Image, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { PROVIDER_NAMES, resolveProvider } from "./resolver.js";
+import { mimeTypeFromExtension } from "./utils.js";
 
-const MODELS = [
-	"gemini-3.1-flash-image-preview",
-	"gemini-3-pro-image-preview",
-	"gemini-2.5-flash-image",
-] as const;
+const IMAGE_CUSTOM_TYPE = "generated-image";
 
 const ASPECT_RATIOS = [
 	"1:1", "1:4", "1:8", "2:3", "3:2", "3:4",
@@ -40,192 +33,139 @@ const ASPECT_RATIOS = [
 
 const IMAGE_SIZES = ["512px", "1K", "2K", "4K"] as const;
 
-const DEFAULT_MODEL = "gemini-3.1-flash-image-preview";
-const DEFAULT_ASPECT_RATIO = "1:1";
-const DEFAULT_IMAGE_SIZE = "1K";
+export default function imageGeneration(pi: ExtensionAPI) {
+	// ── Filter image messages from LLM context ──────────────────────────
+	pi.on("context", async (event) => {
+		const filtered = event.messages.filter(
+			(m: { role: string; customType?: string }) =>
+				!(m.role === "custom" && m.customType === IMAGE_CUSTOM_TYPE),
+		);
+		return { messages: filtered };
+	});
 
-const COST_PER_IMAGE: Record<string, string> = {
-	"gemini-3.1-flash-image-preview": "~$0.067",
-	"gemini-3-pro-image-preview": "~$0.134",
-	"gemini-2.5-flash-image": "~$0.039",
-};
+	// ── Render image messages as standalone conversation entries ─────────
+	pi.registerMessageRenderer(IMAGE_CUSTOM_TYPE, (message, _options, theme) => {
+		const details = message.details as {
+			imageData?: string;
+			imageMimeType?: string;
+			savedPath?: string;
+			provider?: string;
+		} | undefined;
+		if (!details?.imageData) return undefined;
 
-function getClient(): GoogleGenAI {
-	const apiKey = process.env.GEMINI_API_KEY;
-	if (!apiKey) {
-		throw new Error("GEMINI_API_KEY environment variable is not set. Get one at https://aistudio.google.com/apikey");
-	}
-	return new GoogleGenAI({ apiKey });
-}
+		const container = new Container();
 
-function mimeTypeFromFormat(format: string): string {
-	switch (format) {
-		case "jpeg": return "image/jpeg";
-		case "webp": return "image/webp";
-		default: return "image/png";
-	}
-}
+		// Label line
+		const parts: string[] = [];
+		if (details.provider) parts.push(details.provider);
+		if (details.savedPath) parts.push(`→ ${details.savedPath}`);
+		const label = theme.fg("success", "[image] ") + theme.fg("dim", parts.join(" "));
+		container.addChild(new Text(label, 0, 0));
 
-// Shared renderResult for both tools — shows image from details
-function renderImageResult(
-	result: { content: Array<{ type: string; text?: string }>; details?: Record<string, unknown>; isError?: boolean },
-	options: { expanded: boolean; isPartial: boolean },
-	theme: { fg: (color: string, text: string) => string; bold: (text: string) => string },
-) {
-	if (options.isPartial) {
-		return new Text(theme.fg("warning", "Generating..."), 0, 0);
-	}
-
-	if (result.isError) {
-		const text = result.content.find(c => c.type === "text")?.text || "Error";
-		return new Text(theme.fg("error", text), 0, 0);
-	}
-
-	const details = result.details as {
-		imageData?: string;
-		imageMimeType?: string;
-		savedPath?: string;
-		outputPath?: string;
-		model?: string;
-		aspectRatio?: string;
-		imageSize?: string;
-		cost?: string;
-	} | undefined;
-
-	const container = new Container();
-
-	// Summary line
-	const textContent = result.content.find(c => c.type === "text")?.text || "Done";
-	container.addChild(new Text(theme.fg("success", textContent), 0, 0));
-
-	// Render image inline from details (NOT sent to LLM)
-	if (details?.imageData) {
+		// Inline image
 		container.addChild(new Image(
 			details.imageData,
 			details.imageMimeType || "image/png",
 			{ fallbackColor: (s: string) => theme.fg("dim", s) },
 			{ maxWidthCells: 60, maxHeightCells: 30 },
 		));
-	}
 
-	return container;
-}
+		return container;
+	});
 
-export default function imageGeneration(pi: ExtensionAPI) {
 	// ── generate_image ──────────────────────────────────────────────────
 	pi.registerTool({
 		name: "generate_image",
 		label: "Generate Image",
 		description:
-			"Generate an image from a text prompt using Google Gemini image models (Nano Banana). " +
-			"Can save to a file path. Supports various aspect ratios and up to 4K resolution. " +
-			"Models: gemini-3.1-flash-image-preview (default, fast), gemini-3-pro-image-preview (highest quality), " +
-			"gemini-2.5-flash-image (cheapest). Requires GEMINI_API_KEY.",
+			"Generate an image from a text prompt. " +
+			"Providers: gemini (Nano Banana), openai (gpt-image-1), flux (FLUX Pro), stability (SD3). " +
+			"Auto-detects provider from available API keys, or specify with provider param. " +
+			"Supports various aspect ratios. Can save to a file path.",
 		parameters: Type.Object({
 			prompt: Type.String({ description: "Image description / generation prompt." }),
 			output_path: Type.Optional(Type.String({
-				description: "File path to save the generated image (e.g., assets/hero.png). If omitted, image is returned but not saved.",
+				description: "File path to save the generated image (e.g., assets/hero.png).",
 			})),
-			model: Type.Optional(StringEnum(MODELS)),
+			provider: Type.Optional(StringEnum(PROVIDER_NAMES as unknown as readonly [string, ...string[]])),
 			aspect_ratio: Type.Optional(StringEnum(ASPECT_RATIOS)),
 			size: Type.Optional(StringEnum(IMAGE_SIZES)),
 		}),
 
 		renderCall(args, theme) {
-			const model = args.model || process.env.PI_IMAGE_MODEL || DEFAULT_MODEL;
-			const cost = COST_PER_IMAGE[model] || "";
+			let providerName: string;
+			try {
+				providerName = resolveProvider(args.provider).name;
+			} catch {
+				providerName = args.provider || "auto";
+			}
 			let text = theme.fg("toolTitle", theme.bold("generate_image "));
-			text += theme.fg("accent", model);
+			text += theme.fg("accent", providerName);
 			if (args.aspect_ratio) text += theme.fg("dim", ` ${args.aspect_ratio}`);
 			if (args.size) text += theme.fg("dim", ` ${args.size}`);
-			if (cost) text += theme.fg("dim", ` ${cost}`);
 			if (args.output_path) text += theme.fg("dim", ` → ${args.output_path}`);
 			text += "\n" + theme.fg("muted", `"${args.prompt}"`);
 			return new Text(text, 0, 0);
 		},
 
-		renderResult: renderImageResult,
+		renderResult(result, { isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("warning", "Generating..."), 0, 0);
+			if (result.isError) {
+				const text = result.content.find((c: { type: string }) => c.type === "text") as { text?: string } | undefined;
+				return new Text(theme.fg("error", text?.text || "Error"), 0, 0);
+			}
+			const textContent = result.content.find((c: { type: string }) => c.type === "text") as { text?: string } | undefined;
+			return new Text(theme.fg("success", textContent?.text || "Done"), 0, 0);
+		},
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const model = params.model || process.env.PI_IMAGE_MODEL || DEFAULT_MODEL;
-			const aspectRatio = params.aspect_ratio || DEFAULT_ASPECT_RATIO;
-			const imageSize = params.size || DEFAULT_IMAGE_SIZE;
-			const cost = COST_PER_IMAGE[model] || "unknown";
+			const provider = resolveProvider(params.provider);
 
 			onUpdate?.({
-				content: [{ type: "text", text: `Generating image with ${model} (${aspectRatio}, ${imageSize})... [${cost}/image]` }],
-				details: { model, aspectRatio, imageSize, status: "generating" },
+				content: [{ type: "text", text: `Generating image with ${provider.name}...` }],
+				details: { provider: provider.name, status: "generating" },
 			});
 
-			const ai = getClient();
-			const response = await ai.models.generateContent({
-				model,
-				contents: params.prompt,
-				config: {
-					responseModalities: ["TEXT", "IMAGE"],
-					imageConfig: {
-						aspectRatio,
-						imageSize,
-					},
-				},
+			const result = await provider.generate({
+				prompt: params.prompt,
+				aspectRatio: params.aspect_ratio,
+				size: params.size,
+				signal,
 			});
-
-			if (signal?.aborted) {
-				return { content: [{ type: "text", text: "Image generation cancelled." }] };
-			}
-
-			// Extract image and text from response
-			let imageData: string | undefined;
-			let imageMimeType = "image/png";
-			const textParts: string[] = [];
-
-			const parts = response.candidates?.[0]?.content?.parts;
-			if (parts) {
-				for (const part of parts) {
-					if (part.text) {
-						textParts.push(part.text);
-					}
-					if (part.inlineData?.data) {
-						imageData = part.inlineData.data;
-						imageMimeType = part.inlineData.mimeType || "image/png";
-					}
-				}
-			}
-
-			if (!imageData) {
-				const errorText = textParts.length > 0 ? textParts.join(" ") : "Unknown error";
-				return {
-					content: [{ type: "text", text: `Image generation failed: ${errorText}` }],
-					isError: true,
-				};
-			}
 
 			// Save to file if output_path provided
 			let savedPath: string | undefined;
 			if (params.output_path) {
 				const fullPath = resolve(ctx.cwd, params.output_path);
 				await mkdir(dirname(fullPath), { recursive: true });
-				await writeFile(fullPath, Buffer.from(imageData, "base64"));
+				await writeFile(fullPath, Buffer.from(result.data, "base64"));
 				savedPath = params.output_path;
 			}
 
-			// Build text-only summary (this is what LLM sees)
 			const summary: string[] = [];
-			summary.push(`Generated image with ${model} (${aspectRatio}, ${imageSize}).`);
-			if (savedPath) {
-				summary.push(`Saved to: ${savedPath}`);
-			}
-			if (textParts.length > 0) {
-				summary.push(`Model notes: ${textParts.join(" ")}`);
-			}
+			summary.push(`Generated image with ${provider.name}.`);
+			if (savedPath) summary.push(`Saved to: ${savedPath}`);
 
-			// content = text only (sent to LLM)
-			// details = includes image data (for renderResult display only, NOT sent to LLM)
+			// Inject image as separate conversation message (filtered from LLM context)
+			pi.sendMessage(
+				{
+					customType: IMAGE_CUSTOM_TYPE,
+					content: "",
+					display: true,
+					details: {
+						imageData: result.data,
+						imageMimeType: result.mimeType,
+						provider: provider.name,
+						savedPath,
+					},
+				},
+				{ deliverAs: "nextTurn" },
+			);
+
+			// Tool result: text only (sent to LLM)
 			return {
-				content: [
-					{ type: "text", text: summary.join(" ") },
-				],
-				details: { model, aspectRatio, imageSize, savedPath, cost, imageData, imageMimeType },
+				content: [{ type: "text", text: summary.join(" ") }],
+				details: { provider: provider.name, savedPath },
 			};
 		},
 	});
@@ -236,26 +176,31 @@ export default function imageGeneration(pi: ExtensionAPI) {
 		label: "Edit Image",
 		description:
 			"Edit an existing image using a text prompt. Supports modifications, style changes, " +
-			"inpainting, background removal, and more. Can use up to 14 reference images. " +
-			"Requires GEMINI_API_KEY.",
+			"inpainting, background removal. Can use reference images for consistency. " +
+			"Not all providers support editing.",
 		parameters: Type.Object({
-			prompt: Type.String({ description: "Edit instruction (e.g., 'remove the background', 'make it pixel art style')." }),
+			prompt: Type.String({ description: "Edit instruction." }),
 			image_path: Type.String({ description: "Path to the source image to edit." }),
 			output_path: Type.Optional(Type.String({
 				description: "File path to save the edited image. If omitted, overwrites the source.",
 			})),
 			reference_images: Type.Optional(Type.Array(Type.String(), {
-				description: "Additional reference image paths for style/character consistency (max 14 total).",
+				description: "Additional reference image paths (max 14 total).",
 			})),
-			model: Type.Optional(StringEnum(MODELS)),
+			provider: Type.Optional(StringEnum(PROVIDER_NAMES as unknown as readonly [string, ...string[]])),
 			aspect_ratio: Type.Optional(StringEnum(ASPECT_RATIOS)),
 			size: Type.Optional(StringEnum(IMAGE_SIZES)),
 		}),
 
 		renderCall(args, theme) {
-			const model = args.model || process.env.PI_IMAGE_MODEL || DEFAULT_MODEL;
+			let providerName: string;
+			try {
+				providerName = resolveProvider(args.provider).name;
+			} catch {
+				providerName = args.provider || "auto";
+			}
 			let text = theme.fg("toolTitle", theme.bold("edit_image "));
-			text += theme.fg("accent", model);
+			text += theme.fg("accent", providerName);
 			text += theme.fg("dim", ` ${args.image_path}`);
 			if (args.output_path) text += theme.fg("dim", ` → ${args.output_path}`);
 			if (args.reference_images?.length) text += theme.fg("dim", ` +${args.reference_images.length} refs`);
@@ -263,106 +208,88 @@ export default function imageGeneration(pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult: renderImageResult,
+		renderResult(result, { isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("warning", "Editing..."), 0, 0);
+			if (result.isError) {
+				const text = result.content.find((c: { type: string }) => c.type === "text") as { text?: string } | undefined;
+				return new Text(theme.fg("error", text?.text || "Error"), 0, 0);
+			}
+			const textContent = result.content.find((c: { type: string }) => c.type === "text") as { text?: string } | undefined;
+			return new Text(theme.fg("success", textContent?.text || "Done"), 0, 0);
+		},
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const model = params.model || process.env.PI_IMAGE_MODEL || DEFAULT_MODEL;
-			const aspectRatio = params.aspect_ratio;
-			const imageSize = params.size || DEFAULT_IMAGE_SIZE;
+			const provider = resolveProvider(params.provider);
+
+			if (!provider.edit) {
+				return {
+					content: [{ type: "text", text: `Provider "${provider.name}" does not support image editing.` }],
+					isError: true,
+				};
+			}
 
 			onUpdate?.({
-				content: [{ type: "text", text: `Editing image with ${model}...` }],
-				details: { model, status: "editing" },
+				content: [{ type: "text", text: `Editing image with ${provider.name}...` }],
+				details: { provider: provider.name, status: "editing" },
 			});
 
 			// Read source image
 			const srcPath = resolve(ctx.cwd, params.image_path);
 			const srcBuffer = await readFile(srcPath);
-			const srcBase64 = srcBuffer.toString("base64");
+			const srcMime = mimeTypeFromExtension(params.image_path);
 
-			// Detect mime type from extension
-			const ext = params.image_path.split(".").pop()?.toLowerCase() || "png";
-			const srcMime = mimeTypeFromFormat(ext === "jpg" ? "jpeg" : ext);
-
-			// Build content parts: prompt + source image + reference images
-			const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
-			contentParts.push({ text: params.prompt });
-			contentParts.push({ inlineData: { mimeType: srcMime, data: srcBase64 } });
-
-			// Add reference images if provided
+			// Read reference images
+			const referenceImages: Array<{ data: string; mimeType: string }> = [];
 			if (params.reference_images) {
 				for (const refPath of params.reference_images.slice(0, 13)) {
 					const refFullPath = resolve(ctx.cwd, refPath);
 					const refBuffer = await readFile(refFullPath);
-					const refExt = refPath.split(".").pop()?.toLowerCase() || "png";
-					const refMime = mimeTypeFromFormat(refExt === "jpg" ? "jpeg" : refExt);
-					contentParts.push({ inlineData: { mimeType: refMime, data: refBuffer.toString("base64") } });
+					referenceImages.push({
+						data: refBuffer.toString("base64"),
+						mimeType: mimeTypeFromExtension(refPath),
+					});
 				}
 			}
 
-			const ai = getClient();
-			const config: Record<string, unknown> = {
-				responseModalities: ["TEXT", "IMAGE"],
-				imageConfig: {
-					imageSize,
-					...(aspectRatio ? { aspectRatio } : {}),
-				},
-			};
-
-			const response = await ai.models.generateContent({
-				model,
-				contents: contentParts,
-				config: config as import("@google/genai").GenerateContentConfig,
+			const result = await provider.edit({
+				prompt: params.prompt,
+				sourceImage: { data: srcBuffer.toString("base64"), mimeType: srcMime },
+				referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+				aspectRatio: params.aspect_ratio,
+				size: params.size,
+				signal,
 			});
-
-			if (signal?.aborted) {
-				return { content: [{ type: "text", text: "Image editing cancelled." }] };
-			}
-
-			// Extract result
-			let imageData: string | undefined;
-			let imageMimeType = "image/png";
-			const textParts: string[] = [];
-
-			const parts = response.candidates?.[0]?.content?.parts;
-			if (parts) {
-				for (const part of parts) {
-					if (part.text) textParts.push(part.text);
-					if (part.inlineData?.data) {
-						imageData = part.inlineData.data;
-						imageMimeType = part.inlineData.mimeType || "image/png";
-					}
-				}
-			}
-
-			if (!imageData) {
-				const errorText = textParts.length > 0 ? textParts.join(" ") : "Unknown error";
-				return {
-					content: [{ type: "text", text: `Image editing failed: ${errorText}` }],
-					isError: true,
-				};
-			}
 
 			// Save
 			const outPath = params.output_path || params.image_path;
 			const fullOutPath = resolve(ctx.cwd, outPath);
 			await mkdir(dirname(fullOutPath), { recursive: true });
-			await writeFile(fullOutPath, Buffer.from(imageData, "base64"));
+			await writeFile(fullOutPath, Buffer.from(result.data, "base64"));
 
 			const summary: string[] = [];
-			summary.push(`Edited image with ${model}.`);
+			summary.push(`Edited image with ${provider.name}.`);
 			summary.push(`Saved to: ${outPath}`);
-			if (textParts.length > 0) {
-				summary.push(`Model notes: ${textParts.join(" ")}`);
-			}
 
-			// content = text only (sent to LLM)
-			// details = includes image data (for renderResult display only, NOT sent to LLM)
+			// Inject image as separate conversation message (filtered from LLM context)
+			pi.sendMessage(
+				{
+					customType: IMAGE_CUSTOM_TYPE,
+					content: "",
+					display: true,
+					details: {
+						imageData: result.data,
+						imageMimeType: result.mimeType,
+						provider: provider.name,
+						savedPath: outPath,
+					},
+				},
+				{ deliverAs: "nextTurn" },
+			);
+
+			// Tool result: text only (sent to LLM)
 			return {
-				content: [
-					{ type: "text", text: summary.join(" ") },
-				],
-				details: { model, outputPath: outPath, sourceImage: params.image_path, imageData, imageMimeType },
+				content: [{ type: "text", text: summary.join(" ") }],
+				details: { provider: provider.name, outputPath: outPath, sourceImage: params.image_path },
 			};
 		},
 	});
