@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Kimi Code OAuth login support (device code flow) for `/login` menu
+
 ## [0.55.3] - 2026-02-27
 
 ## [0.55.2] - 2026-02-27
