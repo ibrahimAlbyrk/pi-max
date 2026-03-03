@@ -1,0 +1,14 @@
+{
+  "name": "pi-extension-image-generation",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0"
+  }
+}
