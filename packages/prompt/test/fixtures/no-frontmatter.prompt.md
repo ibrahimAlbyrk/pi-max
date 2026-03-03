@@ -1,0 +1,1 @@
+Just plain text with no frontmatter at all.
