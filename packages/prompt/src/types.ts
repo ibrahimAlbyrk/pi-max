@@ -33,6 +33,8 @@ export interface PromptMeta {
 	category: string;
 	/** Absolute file path */
 	filePath: string;
+	/** Extra frontmatter fields not part of the core schema (e.g., agentConfig) */
+	extra: Record<string, unknown>;
 }
 
 /** Result of parsing a .prompt.md file */

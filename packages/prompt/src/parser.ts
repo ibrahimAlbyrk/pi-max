@@ -12,6 +12,7 @@ interface RawFrontmatter {
 	extends?: string;
 	includes?: string[];
 	variables?: RawVariableDefinition[];
+	[key: string]: unknown;
 }
 
 interface RawVariableDefinition {
@@ -148,6 +149,15 @@ export function parsePromptContent(
 		throw new PromptParseError("'includes' must be an array of strings", filePath);
 	}
 
+	// Collect extra fields (anything not part of the core schema)
+	const knownKeys = new Set(["name", "description", "version", "extends", "includes", "variables"]);
+	const extra: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(raw)) {
+		if (!knownKeys.has(key)) {
+			extra[key] = value;
+		}
+	}
+
 	const meta: PromptMeta = {
 		name,
 		description: raw.description ?? "",
@@ -157,6 +167,7 @@ export function parsePromptContent(
 		variables,
 		category: deriveCategory(filePath, templatesDir),
 		filePath,
+		extra,
 	};
 
 	return { meta, rawBody: body };
