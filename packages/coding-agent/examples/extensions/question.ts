@@ -1,19 +1,13 @@
 /**
  * Question Tool - Single question with options
- * Full custom UI: options list + inline editor for "Type something..."
- * Escape in editor returns to options, Escape in options cancels
+ *
+ * Uses the built-in QuestionDialog component via ctx.ui.question() API.
+ * Supports single-select options with an optional "Type something" input.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, QuestionDialogConfig, QuestionPage } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-
-interface OptionWithDesc {
-	label: string;
-	description?: string;
-}
-
-type DisplayOption = OptionWithDesc & { isOther?: boolean };
 
 interface QuestionDetails {
 	question: string;
@@ -22,7 +16,6 @@ interface QuestionDetails {
 	wasCustom?: boolean;
 }
 
-// Options with labels and optional descriptions
 const OptionSchema = Type.Object({
 	label: Type.String({ description: "Display label for the option" }),
 	description: Type.Optional(Type.String({ description: "Optional description shown below label" })),
@@ -59,169 +52,75 @@ export default function question(pi: ExtensionAPI) {
 				};
 			}
 
-			const allOptions: DisplayOption[] = [...params.options, { label: "Type something.", isOther: true }];
+			// Build options with "Let me type..." at the end
+			const options = [
+				...params.options.map((o) => ({
+					value: o.label,
+					label: o.label,
+					description: o.description,
+				})),
+				{ value: "__type__", label: "Let me type..." },
+			];
 
-			const result = await ctx.ui.custom<{ answer: string; wasCustom: boolean; index?: number } | null>(
-				(tui, theme, _kb, done) => {
-					let optionIndex = 0;
-					let editMode = false;
-					let cachedLines: string[] | undefined;
+			const page: QuestionPage = {
+				title: "Question",
+				prompt: params.question,
+				mode: { type: "single-select", options },
+			};
 
-					const editorTheme: EditorTheme = {
-						borderColor: (s) => theme.fg("accent", s),
-						selectList: {
-							selectedPrefix: (t) => theme.fg("accent", t),
-							selectedText: (t) => theme.fg("accent", t),
-							description: (t) => theme.fg("muted", t),
-							scrollInfo: (t) => theme.fg("dim", t),
-							noMatch: (t) => theme.fg("warning", t),
-						},
-					};
-					const editor = new Editor(tui, editorTheme);
+			const config: QuestionDialogConfig = {
+				pages: [page],
+			};
 
-					editor.onSubmit = (value) => {
-						const trimmed = value.trim();
-						if (trimmed) {
-							done({ answer: trimmed, wasCustom: true });
-						} else {
-							editMode = false;
-							editor.setText("");
-							refresh();
-						}
-					};
+			const result = await ctx.ui.question(config);
 
-					function refresh() {
-						cachedLines = undefined;
-						tui.requestRender();
-					}
-
-					function handleInput(data: string) {
-						if (editMode) {
-							if (matchesKey(data, Key.escape)) {
-								editMode = false;
-								editor.setText("");
-								refresh();
-								return;
-							}
-							editor.handleInput(data);
-							refresh();
-							return;
-						}
-
-						if (matchesKey(data, Key.up)) {
-							optionIndex = Math.max(0, optionIndex - 1);
-							refresh();
-							return;
-						}
-						if (matchesKey(data, Key.down)) {
-							optionIndex = Math.min(allOptions.length - 1, optionIndex + 1);
-							refresh();
-							return;
-						}
-
-						if (matchesKey(data, Key.enter)) {
-							const selected = allOptions[optionIndex];
-							if (selected.isOther) {
-								editMode = true;
-								refresh();
-							} else {
-								done({ answer: selected.label, wasCustom: false, index: optionIndex + 1 });
-							}
-							return;
-						}
-
-						if (matchesKey(data, Key.escape)) {
-							done(null);
-						}
-					}
-
-					function render(width: number): string[] {
-						if (cachedLines) return cachedLines;
-
-						const lines: string[] = [];
-						const add = (s: string) => lines.push(truncateToWidth(s, width));
-
-						add(theme.fg("accent", "─".repeat(width)));
-						add(theme.fg("text", ` ${params.question}`));
-						lines.push("");
-
-						for (let i = 0; i < allOptions.length; i++) {
-							const opt = allOptions[i];
-							const selected = i === optionIndex;
-							const isOther = opt.isOther === true;
-							const prefix = selected ? theme.fg("accent", "> ") : "  ";
-
-							if (isOther && editMode) {
-								add(prefix + theme.fg("accent", `${i + 1}. ${opt.label} ✎`));
-							} else if (selected) {
-								add(prefix + theme.fg("accent", `${i + 1}. ${opt.label}`));
-							} else {
-								add(`  ${theme.fg("text", `${i + 1}. ${opt.label}`)}`);
-							}
-
-							// Show description if present
-							if (opt.description) {
-								add(`     ${theme.fg("muted", opt.description)}`);
-							}
-						}
-
-						if (editMode) {
-							lines.push("");
-							add(theme.fg("muted", " Your answer:"));
-							for (const line of editor.render(width - 2)) {
-								add(` ${line}`);
-							}
-						}
-
-						lines.push("");
-						if (editMode) {
-							add(theme.fg("dim", " Enter to submit • Esc to go back"));
-						} else {
-							add(theme.fg("dim", " ↑↓ navigate • Enter to select • Esc to cancel"));
-						}
-						add(theme.fg("accent", "─".repeat(width)));
-
-						cachedLines = lines;
-						return lines;
-					}
-
-					return {
-						render,
-						invalidate: () => {
-							cachedLines = undefined;
-						},
-						handleInput,
-					};
-				},
-			);
-
-			// Build simple options list for details
 			const simpleOptions = params.options.map((o) => o.label);
 
-			if (!result) {
+			if (!result.completed) {
 				return {
 					content: [{ type: "text", text: "User cancelled the selection" }],
 					details: { question: params.question, options: simpleOptions, answer: null } as QuestionDetails,
 				};
 			}
 
-			if (result.wasCustom) {
+			const answer = result.answers[0];
+			if (!answer || answer.type !== "single-select") {
 				return {
-					content: [{ type: "text", text: `User wrote: ${result.answer}` }],
+					content: [{ type: "text", text: "User cancelled the selection" }],
+					details: { question: params.question, options: simpleOptions, answer: null } as QuestionDetails,
+				};
+			}
+
+			// If user selected "Let me type...", the value will be "__type__"
+			// In that case, we'd need a follow-up input — but for simplicity,
+			// we treat it as a regular selection. For full input support,
+			// use the questionnaire tool with type: "input".
+			if (answer.value === "__type__") {
+				// Fall back to input dialog
+				const typed = await ctx.ui.input("Your answer", "Type your response...");
+				if (!typed) {
+					return {
+						content: [{ type: "text", text: "User cancelled the input" }],
+						details: { question: params.question, options: simpleOptions, answer: null } as QuestionDetails,
+					};
+				}
+				return {
+					content: [{ type: "text", text: `User wrote: ${typed}` }],
 					details: {
 						question: params.question,
 						options: simpleOptions,
-						answer: result.answer,
+						answer: typed,
 						wasCustom: true,
 					} as QuestionDetails,
 				};
 			}
+
 			return {
-				content: [{ type: "text", text: `User selected: ${result.index}. ${result.answer}` }],
+				content: [{ type: "text", text: `User selected: ${answer.index + 1}. ${answer.label}` }],
 				details: {
 					question: params.question,
 					options: simpleOptions,
-					answer: result.answer,
+					answer: answer.label,
 					wasCustom: false,
 				} as QuestionDetails,
 			};
@@ -231,8 +130,8 @@ export default function question(pi: ExtensionAPI) {
 			let text = theme.fg("toolTitle", theme.bold("question ")) + theme.fg("muted", args.question);
 			const opts = Array.isArray(args.options) ? args.options : [];
 			if (opts.length) {
-				const labels = opts.map((o: OptionWithDesc) => o.label);
-				const numbered = [...labels, "Type something."].map((o, i) => `${i + 1}. ${o}`);
+				const labels = opts.map((o: { label: string }) => o.label);
+				const numbered = [...labels, "Let me type..."].map((o, i) => `${i + 1}. ${o}`);
 				text += `\n${theme.fg("dim", `  Options: ${numbered.join(", ")}`)}`;
 			}
 			return new Text(text, 0, 0);

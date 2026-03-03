@@ -1,3 +1,4 @@
+export { askQuestionTool } from "./ask-question.js";
 export {
 	type BashOperations,
 	type BashSpawnContext,

@@ -78,6 +78,7 @@ import { getLatestCompactionEntry } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
+import { askUserTool } from "./tools/ask-user.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
 
@@ -279,7 +280,7 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
-		this._customTools = config.customTools ?? [];
+		this._customTools = [...(config.customTools ?? []), askUserTool as unknown as ToolDefinition];
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
@@ -2095,7 +2096,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write", "webfetch", "websearch"];
+			: ["read", "bash", "edit", "write", "webfetch", "websearch", "ask_user"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		const activeToolNameSet = new Set<string>(baseActiveToolNames);
 		if (options.includeAllExtensionTools) {
@@ -2942,5 +2943,13 @@ export class AgentSession {
 	 */
 	get extensionRunner(): ExtensionRunner | undefined {
 		return this._extensionRunner;
+	}
+
+	/**
+	 * Get SDK-level custom tool definitions (registered via customTools config).
+	 * These are not included in extensionRunner.getAllRegisteredTools().
+	 */
+	get customToolDefinitions(): readonly ToolDefinition[] {
+		return this._customTools;
 	}
 }
