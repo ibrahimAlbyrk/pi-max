@@ -7,7 +7,6 @@ variables:
     type: string
     required: true
     description: 'Formatted tool list (e.g. "- read: Read file contents")'
-
   - name: README_PATH
     type: string
     required: true
