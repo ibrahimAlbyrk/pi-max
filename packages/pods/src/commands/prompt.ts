@@ -1,3 +1,4 @@
+import { createPromptRegistry, getTemplatesDir } from "@mariozechner/pi-prompt";
 import chalk from "chalk";
 import { getActivePod, loadConfig } from "../config.js";
 
@@ -39,19 +40,10 @@ export async function promptModel(modelName: string, userArgs: string[], opts: P
 			?.split("@")[1] ?? "localhost";
 
 	// Build the system prompt for code navigation
-	const systemPrompt = `You help the user understand and navigate the codebase in the current working directory.
-
-You can read files, list directories, and execute shell commands via the respective tools.
-
-Do not output file contents you read via the read_file tool directly, unless asked to.
-
-Do not output markdown tables as part of your responses.
-
-Keep your responses concise and relevant to the user's request.
-
-File paths you output must include line numbers where possible, e.g. "src/index.ts:10-20" for lines 10 to 20 in src/index.ts.
-
-Current working directory: ${process.cwd()}`;
+	const registry = createPromptRegistry({ templatesDir: getTemplatesDir() });
+	const systemPrompt = registry.render("system/pods", {
+		WORKING_DIR: process.cwd(),
+	});
 
 	// Build arguments for agent main function
 	const args: string[] = [];
