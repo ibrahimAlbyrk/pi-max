@@ -14,6 +14,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { createPromptRegistry, getTemplatesDir, type PromptRegistry } from "@mariozechner/pi-prompt";
 import { TypedEventEmitter } from "./event-emitter.js";
 import type { AgentRegistry } from "./agent-registry.js";
 import type { HookEngine } from "./hook-engine.js";
@@ -74,8 +75,8 @@ export class AgentManager {
   private destroying = false;
   /** Maps agent ID → assigned task IDs (for cross-extension event emission) */
   private agentTaskIds = new Map<string, number[]>();
-  /** Cached raw awareness prompt template (read once from .md file) */
-  private awarenessPromptCache: string | null = null;
+  /** Prompt registry instance for rendering awareness template */
+  private promptRegistry: PromptRegistry | null = null;
 
 
 
@@ -147,27 +148,28 @@ export class AgentManager {
 
   // ─── Subagent Awareness ─────────────────────────────────────────
 
+  private getPromptRegistry(): PromptRegistry {
+    if (!this.promptRegistry) {
+      this.promptRegistry = createPromptRegistry({ templatesDir: getTemplatesDir() });
+    }
+    return this.promptRegistry;
+  }
+
   /**
-   * Load and interpolate the subagent awareness prompt template.
-   * Template is read once from disk and cached; placeholders are
-   * replaced per-agent at spawn time.
+   * Render the subagent awareness prompt via the prompt registry.
+   * Uses the agents/subagent-awareness template with AGENT_ID and AGENT_TYPE variables.
    */
   private getAwarenessPrompt(agentId: string, agentType: string): string {
-    if (this.awarenessPromptCache === null) {
-      try {
-        const promptPath = join(
-          this.cwd, ".pi", "extensions", "subagent-system",
-          "prompts", "subagent-awareness.prompt.md",
-        );
-        this.awarenessPromptCache = readFileSync(promptPath, "utf-8");
-      } catch {
-        this.awarenessPromptCache = "";
-      }
+    try {
+      const registry = this.getPromptRegistry();
+      const rendered = registry.render("agents/subagent-awareness", {
+        AGENT_ID: agentId,
+        AGENT_TYPE: agentType,
+      });
+      return "\n\n" + rendered;
+    } catch {
+      return "";
     }
-    if (!this.awarenessPromptCache) return "";
-    return "\n\n" + this.awarenessPromptCache
-      .replace(/\{\{agentId\}\}/g, agentId)
-      .replace(/\{\{agentType\}\}/g, agentType);
   }
 
   setCwd(newCwd: string): void { this.cwd = newCwd; }

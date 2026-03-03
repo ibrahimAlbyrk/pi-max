@@ -1,40 +1,57 @@
 /**
  * SubAgent System — Agent Registry
  *
- * Discovers and loads agent definitions from:
+ * Discovers and loads agent definitions from (lowest to highest priority):
+ * - Built-in agents from prompt registry (packages/prompt/templates/agents/)
  * - ~/.pi/agent/agents/*.md  (global / user)
  * - .pi/agents/*.md          (project-local, searched upward from cwd)
  *
- * Project-local agents override global agents with the same name.
+ * Higher priority sources override lower priority ones with the same name.
+ * Built-in agents support template features (variables, extends, includes).
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir, parseFrontmatter } from "@mariozechner/pi-coding-agent";
+import { createPromptRegistry, getTemplatesDir, type PromptRegistry } from "@mariozechner/pi-prompt";
 import type { AgentDefinition, HookConfig, MessagingConfig, ThinkingLevel } from "./types.js";
 import { DEFAULT_MESSAGING_CONFIG } from "./types.js";
 
 const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
 
 export class AgentRegistry {
+  private _promptRegistry: PromptRegistry | null = null;
+
+  private getPromptRegistry(): PromptRegistry {
+    if (!this._promptRegistry) {
+      this._promptRegistry = createPromptRegistry({ templatesDir: getTemplatesDir() });
+    }
+    return this._promptRegistry;
+  }
+
   /**
-   * Discover all agent definitions from global and project-local directories.
-   * Project-local agents override global ones with the same name.
+   * Discover all agent definitions from built-in, global, and project-local directories.
+   * Priority: built-in < global < project-local.
    */
   discover(cwd: string): AgentDefinition[] {
     const agents = new Map<string, AgentDefinition>();
 
-    // 1. Global: ~/.pi/agent/agents/*.md
+    // 1. Built-in: from prompt registry (templates/agents/)
+    for (const def of this.loadBuiltinAgents()) {
+      agents.set(def.name, def);
+    }
+
+    // 2. Global: ~/.pi/agent/agents/*.md
     const globalDir = path.join(getAgentDir(), "agents");
     for (const def of this.loadFromDir(globalDir, "user")) {
       agents.set(def.name, def);
     }
 
-    // 2. Project-local: .pi/agents/*.md (search upward from cwd)
+    // 3. Project-local: .pi/agents/*.md (search upward from cwd)
     const projectDir = this.findProjectAgentsDir(cwd);
     if (projectDir) {
       for (const def of this.loadFromDir(projectDir, "project")) {
-        agents.set(def.name, def); // Override global
+        agents.set(def.name, def); // Override global and built-in
       }
     }
 
@@ -46,6 +63,78 @@ export class AgentRegistry {
    */
   findByName(cwd: string, name: string): AgentDefinition | undefined {
     return this.discover(cwd).find((d) => d.name === name);
+  }
+
+  /**
+   * Load built-in agent definitions from the prompt registry.
+   * These are the default agents shipped with the prompt package.
+   * Their systemPrompt is rendered through the template engine,
+   * supporting variables, extends, and includes.
+   *
+   * Agent-specific config (tools, model, thinking, color) is read from
+   * the `agentConfig` frontmatter field. Tools are also passed as render
+   * variables so the template body can reference them dynamically.
+   */
+  private loadBuiltinAgents(): AgentDefinition[] {
+    const results: AgentDefinition[] = [];
+    try {
+      const registry = this.getPromptRegistry();
+      const agentPrompts = registry.listByCategory("agents");
+
+      for (const promptName of agentPrompts) {
+        try {
+          const meta = registry.getMeta(promptName);
+
+          // Read agent config from extra frontmatter
+          const agentConfig = (meta.extra?.agentConfig ?? {}) as Record<string, unknown>;
+
+          // Parse tools
+          const toolsStr = typeof agentConfig.tools === "string" ? agentConfig.tools : undefined;
+          const tools = toolsStr?.split(",").map((t: string) => t.trim()).filter(Boolean);
+
+          // Parse thinking
+          const thinkingStr = typeof agentConfig.thinking === "string" ? agentConfig.thinking : undefined;
+          const thinking = thinkingStr && VALID_THINKING_LEVELS.has(thinkingStr)
+            ? thinkingStr as ThinkingLevel
+            : undefined;
+
+          // Build render variables from tools for dynamic body content
+          const renderVars: Record<string, unknown> = {};
+          if (tools) {
+            renderVars.TOOLS_LIST = tools.join(", ");
+            // Set HAS_* flags for each tool
+            for (const tool of tools) {
+              renderVars[`HAS_${tool.toUpperCase().replace(/-/g, "_")}`] = true;
+            }
+            // Common group flags
+            renderVars.HAS_LSP = tools.some(t => t.startsWith("lsp_"));
+          }
+
+          const renderedBody = registry.render(promptName, renderVars);
+
+          // Extract agent name: "agents/explorer" -> "explorer"
+          const agentName = promptName.replace("agents/", "");
+
+          results.push({
+            name: agentName,
+            description: meta.description,
+            tools: tools && tools.length > 0 ? tools : undefined,
+            model: typeof agentConfig.model === "string" ? agentConfig.model : undefined,
+            thinking,
+            color: typeof agentConfig.color === "string" ? agentConfig.color : undefined,
+            hooks: {},
+            systemPrompt: renderedBody.trim(),
+            source: "project",
+            filePath: meta.filePath,
+          });
+        } catch (err) {
+          console.error(`[subagent] Failed to load built-in agent "${promptName}":`, err);
+        }
+      }
+    } catch {
+      // Prompt registry not available — skip built-in agents
+    }
+    return results;
   }
 
   /**
