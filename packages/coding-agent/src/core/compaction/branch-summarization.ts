@@ -14,6 +14,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "../messages.js";
+import { getPromptRegistry } from "../prompt-registry.js";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.js";
 import { estimateTokens } from "./compaction.js";
 import {
@@ -22,7 +23,7 @@ import {
 	extractFileOpsFromMessage,
 	type FileOperations,
 	formatFileOperations,
-	SUMMARIZATION_SYSTEM_PROMPT,
+	getSummarizationSystemPrompt,
 	serializeConversation,
 } from "./utils.js";
 
@@ -237,39 +238,8 @@ export function prepareBranchEntries(entries: SessionEntry[], tokenBudget: numbe
 // Summary Generation
 // ============================================================================
 
-const BRANCH_SUMMARY_PREAMBLE = `The user explored a different conversation branch before returning here.
-Summary of that exploration:
-
-`;
-
-const BRANCH_SUMMARY_PROMPT = `Create a structured summary of this conversation branch for context when returning later.
-
-Use this EXACT format:
-
-## Goal
-[What was the user trying to accomplish in this branch?]
-
-## Constraints & Preferences
-- [Any constraints, preferences, or requirements mentioned]
-- [Or "(none)" if none were mentioned]
-
-## Progress
-### Done
-- [x] [Completed tasks/changes]
-
-### In Progress
-- [ ] [Work that was started but not finished]
-
-### Blocked
-- [Issues preventing progress, if any]
-
-## Key Decisions
-- **[Decision]**: [Brief rationale]
-
-## Next Steps
-1. [What should happen next to continue this work]
-
-Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+// Prompt constants removed - now served from prompt registry:
+// compaction/branch-preamble, compaction/branch-summary
 
 /**
  * Generate a summary of abandoned branch entries.
@@ -299,13 +269,15 @@ export async function generateBranchSummary(
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build prompt
+	const promptRegistry = getPromptRegistry();
+	const branchSummaryPrompt = promptRegistry.render("compaction/branch-summary");
 	let instructions: string;
 	if (replaceInstructions && customInstructions) {
 		instructions = customInstructions;
 	} else if (customInstructions) {
-		instructions = `${BRANCH_SUMMARY_PROMPT}\n\nAdditional focus: ${customInstructions}`;
+		instructions = `${branchSummaryPrompt}\n\nAdditional focus: ${customInstructions}`;
 	} else {
-		instructions = BRANCH_SUMMARY_PROMPT;
+		instructions = branchSummaryPrompt;
 	}
 	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${instructions}`;
 
@@ -320,7 +292,7 @@ export async function generateBranchSummary(
 	// Call LLM for summarization
 	const response = await completeSimple(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		{ systemPrompt: getSummarizationSystemPrompt(), messages: summarizationMessages },
 		{ apiKey, signal, maxTokens: 2048 },
 	);
 
@@ -338,7 +310,8 @@ export async function generateBranchSummary(
 		.join("\n");
 
 	// Prepend preamble to provide context about the branch summary
-	summary = BRANCH_SUMMARY_PREAMBLE + summary;
+	const branchPreamble = promptRegistry.render("compaction/branch-preamble");
+	summary = branchPreamble + summary;
 
 	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);

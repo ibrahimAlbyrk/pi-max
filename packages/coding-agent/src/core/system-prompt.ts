@@ -3,20 +3,21 @@
  */
 
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
+import { getPromptRegistry } from "./prompt-registry.js";
 import { formatSkillsForPrompt, type Skill } from "./skills.js";
 
-/** Tool descriptions for system prompt */
-const toolDescriptions: Record<string, string> = {
-	read: "Read file contents",
-	bash: "Execute bash commands (ls, grep, find, etc.)",
-	edit: "Make surgical edits to files (find exact text and replace)",
-	write: "Create or overwrite files",
-	grep: "Search file contents for patterns (respects .gitignore)",
-	find: "Find files by glob pattern (respects .gitignore)",
-	ls: "List directory contents",
-	webfetch: "Fetch a web page and return its content as clean markdown (strips navigation, ads, boilerplate)",
-	websearch: "Search the web using DuckDuckGo (no API key required). Combine with webfetch to read full pages.",
-};
+/** Known built-in tool names that have short descriptions in the prompt registry */
+const KNOWN_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "webfetch", "websearch"] as const;
+
+/** Get tool descriptions from the prompt registry */
+function getToolDescriptions(): Record<string, string> {
+	const registry = getPromptRegistry();
+	const descriptions: Record<string, string> = {};
+	for (const tool of KNOWN_TOOLS) {
+		descriptions[tool] = registry.render(`tools/${tool}-short`);
+	}
+	return descriptions;
+}
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
@@ -97,6 +98,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	const examplesPath = getExamplesPath();
 
 	// Build tools list based on selected tools (only built-in tools with known descriptions)
+	const toolDescriptions = getToolDescriptions();
 	const tools = (selectedTools || ["read", "bash", "edit", "write", "webfetch", "websearch"]).filter(
 		(t) => t in toolDescriptions,
 	);
@@ -148,45 +150,31 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
-
-Available tools:
-${toolsList}
-
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
-Guidelines:
-${guidelines}
-
-Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: ${readmePath}
-- Additional docs: ${docsPath}
-- Examples: ${examplesPath} (extensions, custom tools, SDK)
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md)
-- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
-
-	if (appendSection) {
-		prompt += appendSection;
-	}
-
-	// Append project context files
+	// Build context sections
+	let contextFilesSection = "";
 	if (contextFiles.length > 0) {
-		prompt += "\n\n# Project Context\n\n";
-		prompt += "Project-specific instructions and guidelines:\n\n";
+		contextFilesSection = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 		for (const { path: filePath, content } of contextFiles) {
-			prompt += `## ${filePath}\n\n${content}\n\n`;
+			contextFilesSection += `## ${filePath}\n\n${content}\n\n`;
 		}
 	}
 
-	// Append skills section (only if read tool is available)
+	let skillsSection = "";
 	if (hasRead && skills.length > 0) {
-		prompt += formatSkillsForPrompt(skills);
+		skillsSection = formatSkillsForPrompt(skills);
 	}
 
-	// Add date/time and working directory last
-	prompt += `\nCurrent date and time: ${dateTime}`;
-	prompt += `\nCurrent working directory: ${resolvedCwd}`;
-
-	return prompt;
+	const registry = getPromptRegistry();
+	return registry.render("system/coding-agent", {
+		TOOLS_LIST: toolsList,
+		GUIDELINES: guidelines,
+		README_PATH: readmePath,
+		DOCS_PATH: docsPath,
+		EXAMPLES_PATH: examplesPath,
+		APPEND_SECTION: appendSection,
+		CONTEXT_FILES_SECTION: contextFilesSection,
+		SKILLS_SECTION: skillsSection,
+		DATE_TIME: dateTime,
+		WORKING_DIR: resolvedCwd,
+	});
 }

@@ -149,6 +149,10 @@ export function serializeConversation(messages: Message[]): string {
 // Summarization System Prompt
 // ============================================================================
 
-export const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
+import { getPromptRegistry } from "../prompt-registry.js";
 
-Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
+export function getSummarizationSystemPrompt(): string {
+	return getPromptRegistry().render("compaction/system");
+}
+
+// Prompt constant removed - now served from prompt registry: compaction/system
