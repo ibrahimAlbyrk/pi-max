@@ -29,6 +29,7 @@ import type {
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
+	ExtensionLoadError,
 	ExtensionRuntime,
 	LoadExtensionsResult,
 	MessageRenderer,
@@ -299,18 +300,53 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 	};
 }
 
+/**
+ * Find the nearest directory containing a package.json with dependencies,
+ * starting from the given file path and walking up.
+ */
+function findExtensionPackageDir(filePath: string): string | null {
+	let dir = path.dirname(filePath);
+	const root = path.resolve("/");
+
+	for (let i = 0; i < 5; i++) {
+		const pkgPath = path.join(dir, "package.json");
+		if (fs.existsSync(pkgPath)) {
+			try {
+				const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+				if (pkg.dependencies && Object.keys(pkg.dependencies).length > 0) {
+					return dir;
+				}
+			} catch {
+				// ignore parse errors
+			}
+		}
+		if (dir === root) break;
+		dir = path.dirname(dir);
+	}
+
+	return null;
+}
+
+const CANNOT_FIND_MODULE_RE = /Cannot find module/;
+
 async function loadExtension(
 	extensionPath: string,
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
-): Promise<{ extension: Extension | null; error: string | null }> {
+): Promise<{ extension: Extension | null; error: ExtensionLoadError | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd);
 
 	try {
 		const factory = await loadExtensionModule(resolvedPath);
 		if (!factory) {
-			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
+			return {
+				extension: null,
+				error: {
+					path: extensionPath,
+					error: `Extension does not export a valid factory function: ${extensionPath}`,
+				},
+			};
 		}
 
 		const extension = createExtension(extensionPath, resolvedPath);
@@ -320,7 +356,24 @@ async function loadExtension(
 		return { extension, error: null };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		return { extension: null, error: `Failed to load extension: ${message}` };
+		const errorObj: ExtensionLoadError = {
+			path: extensionPath,
+			error: `Failed to load extension: ${message}`,
+		};
+
+		// Detect missing npm dependencies
+		if (CANNOT_FIND_MODULE_RE.test(message)) {
+			const packageDir = findExtensionPackageDir(resolvedPath);
+			if (packageDir) {
+				const nodeModulesPath = path.join(packageDir, "node_modules");
+				if (!fs.existsSync(nodeModulesPath)) {
+					errorObj.needsInstall = true;
+					errorObj.packageDir = packageDir;
+				}
+			}
+		}
+
+		return { extension: null, error: errorObj };
 	}
 }
 
@@ -345,7 +398,7 @@ export async function loadExtensionFromFactory(
  */
 export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
-	const errors: Array<{ path: string; error: string }> = [];
+	const errors: ExtensionLoadError[] = [];
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const runtime = createExtensionRuntime();
 
@@ -353,7 +406,7 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
 
 		if (error) {
-			errors.push({ path: extPath, error });
+			errors.push(error);
 			continue;
 		}
 

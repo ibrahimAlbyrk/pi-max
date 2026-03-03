@@ -1356,10 +1356,19 @@ export interface Extension {
 	shortcuts: Map<KeyId, ExtensionShortcut>;
 }
 
+export interface ExtensionLoadError {
+	path: string;
+	error: string;
+	/** True when the error is caused by missing npm dependencies that can be installed. */
+	needsInstall?: boolean;
+	/** Directory containing the package.json where `npm install` should be run. */
+	packageDir?: string;
+}
+
 /** Result of loading extensions. */
 export interface LoadExtensionsResult {
 	extensions: Extension[];
-	errors: Array<{ path: string; error: string }>;
+	errors: ExtensionLoadError[];
 	/** Shared runtime - actions are throwing stubs until runner.initialize() */
 	runtime: ExtensionRuntime;
 }

@@ -10,7 +10,13 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.js";
 
 import { createEventBus, type EventBus } from "./event-bus.js";
 import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
-import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.js";
+import type {
+	Extension,
+	ExtensionFactory,
+	ExtensionLoadError,
+	ExtensionRuntime,
+	LoadExtensionsResult,
+} from "./extensions/types.js";
 import { DefaultPackageManager, type PathMetadata } from "./package-manager.js";
 import type { PromptTemplate } from "./prompt-templates.js";
 import { loadPromptTemplates } from "./prompt-templates.js";
@@ -667,10 +673,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	private async loadExtensionFactories(runtime: ExtensionRuntime): Promise<{
 		extensions: Extension[];
-		errors: Array<{ path: string; error: string }>;
+		errors: ExtensionLoadError[];
 	}> {
 		const extensions: Extension[] = [];
-		const errors: Array<{ path: string; error: string }> = [];
+		const errors: ExtensionLoadError[] = [];
 
 		for (const [index, factory] of this.extensionFactories.entries()) {
 			const extensionPath = `<inline:${index + 1}>`;

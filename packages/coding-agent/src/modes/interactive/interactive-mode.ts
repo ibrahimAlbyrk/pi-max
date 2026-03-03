@@ -227,6 +227,9 @@ export class InteractiveMode {
 	// Extension widgets (components rendered above/below the editor)
 	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
 	private extensionWidgetsBelow = new Map<string, Component & { dispose?(): void }>();
+
+	// Extensions that need dependency installation (checked after UI starts)
+	private pendingExtensionInstalls: Array<{ path: string; packageDir: string }> = [];
 	private widgetContainerAbove!: Container;
 	private widgetContainerBelow!: Container;
 
@@ -513,6 +516,9 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
+
+		// Prompt to install missing extension dependencies (needs UI event loop)
+		await this.promptExtensionInstalls();
 
 		// Start version check asynchronously
 		this.checkForNewVersion().then((newVersion) => {
@@ -973,11 +979,19 @@ export class InteractiveMode {
 
 			const extensionDiagnostics: ResourceDiagnostic[] = [];
 			const extensionErrors = this.session.resourceLoader.getExtensions().errors;
+			const installableErrors: Array<{ path: string; packageDir: string }> = [];
 			if (extensionErrors.length > 0) {
 				for (const error of extensionErrors) {
-					extensionDiagnostics.push({ type: "error", message: error.error, path: error.path });
+					if (error.needsInstall && error.packageDir) {
+						installableErrors.push({ path: error.path, packageDir: error.packageDir });
+					} else {
+						extensionDiagnostics.push({ type: "error", message: error.error, path: error.path });
+					}
 				}
 			}
+
+			// Store installable errors for prompting after UI starts
+			this.pendingExtensionInstalls = installableErrors;
 
 			const commandDiagnostics = this.session.extensionRunner?.getCommandDiagnostics() ?? [];
 			extensionDiagnostics.push(...commandDiagnostics);
@@ -989,6 +1003,20 @@ export class InteractiveMode {
 				const warningLines = this.formatDiagnostics(extensionDiagnostics, metadata);
 				this.chatContainer.addChild(
 					new Text(`${theme.fg("warning", "[Extension issues]")}\n${warningLines}`, 0, 0),
+				);
+				this.chatContainer.addChild(new Spacer(1));
+			}
+
+			if (installableErrors.length > 0) {
+				const extNames = installableErrors
+					.map((e) => theme.fg("accent", `  ${this.formatDisplayPath(e.path)}`))
+					.join("\n");
+				this.chatContainer.addChild(
+					new Text(
+						`${theme.fg("warning", "[Missing extension dependencies]")}\n${extNames}\n  ${theme.fg("muted", "Run /reload after installing, or restart to be prompted.")}`,
+						0,
+						0,
+					),
 				);
 				this.chatContainer.addChild(new Spacer(1));
 			}
@@ -1101,6 +1129,65 @@ export class InteractiveMode {
 
 		this.setupExtensionShortcuts(extensionRunner);
 		this.showLoadedResources({ extensionPaths: extensionRunner.getExtensionPaths(), force: false });
+	}
+
+	/**
+	 * Prompt user to install missing extension dependencies.
+	 * Called after UI event loop starts so selectors work.
+	 */
+	private async promptExtensionInstalls(): Promise<void> {
+		if (this.pendingExtensionInstalls.length === 0) return;
+
+		const installs = this.pendingExtensionInstalls;
+		this.pendingExtensionInstalls = [];
+
+		const extNames = installs.map((e) => path.basename(path.dirname(e.path))).join(", ");
+		const selected = await this.showExtensionSelector(
+			`Extensions with missing dependencies: ${extNames}\nWould you like to install them?`,
+			["Yes", "No"],
+		);
+
+		if (selected !== "Yes") return;
+
+		const loader = new BorderedLoader(this.ui, theme, "Installing extension dependencies...", {
+			cancellable: false,
+		});
+		this.editorContainer.clear();
+		this.editorContainer.addChild(loader);
+		this.ui.setFocus(loader);
+		this.ui.requestRender();
+
+		let anyFailed = false;
+		for (const install of installs) {
+			try {
+				const result = spawnSync("npm", ["install"], {
+					cwd: install.packageDir,
+					stdio: "pipe",
+					timeout: 60_000,
+				});
+				if (result.status !== 0) {
+					const stderr = result.stderr?.toString() ?? "unknown error";
+					this.showError(`Failed to install dependencies for ${this.formatDisplayPath(install.path)}: ${stderr}`);
+					anyFailed = true;
+				}
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				this.showError(`Failed to install dependencies for ${this.formatDisplayPath(install.path)}: ${msg}`);
+				anyFailed = true;
+			}
+		}
+
+		loader.dispose();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
+		this.ui.requestRender();
+
+		if (!anyFailed) {
+			await this.handleReloadCommand();
+		} else {
+			this.showWarning("Some dependencies failed to install. Fix the issues and run /reload.");
+		}
 	}
 
 	/**
