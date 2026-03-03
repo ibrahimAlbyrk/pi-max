@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import * as Diff from "diff";
+import { getPromptRegistry } from "../prompt-registry.js";
 import type { Executor } from "../sandbox.js";
 
 /**
@@ -97,8 +98,7 @@ export function createEditTool(executor: Executor): AgentTool<typeof editSchema>
 	return {
 		name: "edit",
 		label: "edit",
-		description:
-			"Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits.",
+		description: getPromptRegistry().render("tools/edit"),
 		parameters: editSchema,
 		execute: async (
 			_toolCallId: string,

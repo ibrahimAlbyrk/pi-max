@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import { basename, resolve as resolvePath } from "path";
+import { getPromptRegistry } from "../prompt-registry.js";
 
 // This will be set by the agent before running
 let uploadFn: ((filePath: string, title?: string) => Promise<void>) | null = null;
@@ -18,8 +19,7 @@ const attachSchema = Type.Object({
 export const attachTool: AgentTool<typeof attachSchema> = {
 	name: "attach",
 	label: "attach",
-	description:
-		"Attach a file to your response. Use this to share files, images, or documents with the user. Only files from /workspace/ can be attached.",
+	description: getPromptRegistry().render("tools/attach"),
 	parameters: attachSchema,
 	execute: async (
 		_toolCallId: string,

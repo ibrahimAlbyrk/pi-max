@@ -1,5 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
+import { getPromptRegistry } from "../prompt-registry.js";
 import type { Executor } from "../sandbox.js";
 
 const writeSchema = Type.Object({
@@ -12,8 +13,7 @@ export function createWriteTool(executor: Executor): AgentTool<typeof writeSchem
 	return {
 		name: "write",
 		label: "write",
-		description:
-			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+		description: getPromptRegistry().render("tools/write"),
 		parameters: writeSchema,
 		execute: async (
 			_toolCallId: string,

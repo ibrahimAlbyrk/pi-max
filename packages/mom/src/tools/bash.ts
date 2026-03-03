@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
+import { getPromptRegistry } from "../prompt-registry.js";
 import type { Executor } from "../sandbox.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
 
@@ -30,7 +31,10 @@ export function createBashTool(executor: Executor): AgentTool<typeof bashSchema>
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: getPromptRegistry().render("tools/bash", {
+			MAX_LINES: DEFAULT_MAX_LINES,
+			MAX_KB: DEFAULT_MAX_BYTES / 1024,
+		}),
 		parameters: bashSchema,
 		execute: async (
 			_toolCallId: string,
