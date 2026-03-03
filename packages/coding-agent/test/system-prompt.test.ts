@@ -5,7 +5,7 @@ describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {
 		test("shows (none) for empty tools list", () => {
 			const prompt = buildSystemPrompt({
-				selectedTools: [],
+				activeTools: [],
 				contextFiles: [],
 				skills: [],
 			});
@@ -15,7 +15,7 @@ describe("buildSystemPrompt", () => {
 
 		test("shows file paths guideline even with no tools", () => {
 			const prompt = buildSystemPrompt({
-				selectedTools: [],
+				activeTools: [],
 				contextFiles: [],
 				skills: [],
 			});
@@ -25,8 +25,14 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("default tools", () => {
-		test("includes all default tools", () => {
+		test("includes all default tools when provided", () => {
 			const prompt = buildSystemPrompt({
+				activeTools: [
+					{ name: "read", description: "Read file contents" },
+					{ name: "bash", description: "Execute bash commands" },
+					{ name: "edit", description: "Edit files" },
+					{ name: "write", description: "Write files" },
+				],
 				contextFiles: [],
 				skills: [],
 			});
@@ -35,6 +41,24 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("- bash:");
 			expect(prompt).toContain("- edit:");
 			expect(prompt).toContain("- write:");
+		});
+	});
+
+	describe("extension tools", () => {
+		test("includes extension tools with their descriptions", () => {
+			const prompt = buildSystemPrompt({
+				activeTools: [
+					{ name: "read", description: "Read file contents" },
+					{ name: "tree_search", description: "Browse and search project files" },
+					{ name: "lsp_diagnostics", description: "Get compiler errors and warnings" },
+				],
+				contextFiles: [],
+				skills: [],
+			});
+
+			expect(prompt).toContain("- read:");
+			expect(prompt).toContain("- tree_search:");
+			expect(prompt).toContain("- lsp_diagnostics:");
 		});
 	});
 });

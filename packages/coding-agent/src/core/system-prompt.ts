@@ -6,24 +6,32 @@ import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
 import { getPromptRegistry } from "./prompt-registry.js";
 import { formatSkillsForPrompt, type Skill } from "./skills.js";
 
-/** Known built-in tool names that have short descriptions in the prompt registry */
-const KNOWN_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "webfetch", "websearch"] as const;
+/** Minimal tool info needed for system prompt generation */
+export interface ToolInfo {
+	name: string;
+	description: string;
+}
 
-/** Get tool descriptions from the prompt registry */
-function getToolDescriptions(): Record<string, string> {
+/**
+ * Get the short description for a tool.
+ * Falls back to first sentence of tool's own description if no prompt template exists.
+ */
+function getToolShortDescription(tool: ToolInfo): string {
 	const registry = getPromptRegistry();
-	const descriptions: Record<string, string> = {};
-	for (const tool of KNOWN_TOOLS) {
-		descriptions[tool] = registry.render(`tools/${tool}-short`);
+	try {
+		return registry.render(`tools/${tool.name}-short`);
+	} catch {
+		// No prompt template for this tool — use tool's own description (first line)
+		const firstLine = tool.description.split("\n")[0].trim();
+		return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
 	}
-	return descriptions;
 }
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
-	/** Tools to include in prompt. Default: [read, bash, edit, write] */
-	selectedTools?: string[];
+	/** Active tools to list in the prompt. Each must have name and description. */
+	activeTools?: ToolInfo[];
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
 	/** Working directory. Default: process.cwd() */
@@ -38,7 +46,7 @@ export interface BuildSystemPromptOptions {
 export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): string {
 	const {
 		customPrompt,
-		selectedTools,
+		activeTools,
 		appendSystemPrompt,
 		cwd,
 		contextFiles: providedContextFiles,
@@ -80,7 +88,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		}
 
 		// Append skills section (only if read tool is available)
-		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
+		const customPromptHasRead = !activeTools || activeTools.some((t) => t.name === "read");
 		if (customPromptHasRead && skills.length > 0) {
 			prompt += formatSkillsForPrompt(skills);
 		}
@@ -97,58 +105,10 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	const docsPath = getDocsPath();
 	const examplesPath = getExamplesPath();
 
-	// Build tools list based on selected tools (only built-in tools with known descriptions)
-	const toolDescriptions = getToolDescriptions();
-	const tools = (selectedTools || ["read", "bash", "edit", "write", "webfetch", "websearch"]).filter(
-		(t) => t in toolDescriptions,
-	);
-	const toolsList = tools.length > 0 ? tools.map((t) => `- ${t}: ${toolDescriptions[t]}`).join("\n") : "(none)";
-
-	// Build guidelines based on which tools are actually available
-	const guidelinesList: string[] = [];
-
-	const hasBash = tools.includes("bash");
-	const hasEdit = tools.includes("edit");
-	const hasWrite = tools.includes("write");
-	const hasGrep = tools.includes("grep");
-	const hasFind = tools.includes("find");
-	const hasLs = tools.includes("ls");
-	const hasRead = tools.includes("read");
-
-	// File exploration guidelines
-	if (hasBash && !hasGrep && !hasFind && !hasLs) {
-		guidelinesList.push("Use bash for file operations like ls, rg, find");
-	} else if (hasBash && (hasGrep || hasFind || hasLs)) {
-		guidelinesList.push("Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)");
-	}
-
-	// Read before edit guideline
-	if (hasRead && hasEdit) {
-		guidelinesList.push("Use read to examine files before editing. You must use this tool instead of cat or sed.");
-	}
-
-	// Edit guideline
-	if (hasEdit) {
-		guidelinesList.push("Use edit for precise changes (old text must match exactly)");
-	}
-
-	// Write guideline
-	if (hasWrite) {
-		guidelinesList.push("Use write only for new files or complete rewrites");
-	}
-
-	// Output guideline (only when actually writing or executing)
-	if (hasEdit || hasWrite) {
-		guidelinesList.push(
-			"When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did",
-		);
-	}
-
-	// Always include these
-	guidelinesList.push("Be concise in your responses");
-	guidelinesList.push("Show file paths clearly when working with files");
-
-	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
+	// Build tools list from active tools
+	const tools = activeTools ?? [];
+	const toolsList =
+		tools.length > 0 ? tools.map((t) => `- ${t.name}: ${getToolShortDescription(t)}`).join("\n") : "(none)";
 
 	// Build context sections
 	let contextFilesSection = "";
@@ -160,14 +120,13 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	}
 
 	let skillsSection = "";
-	if (hasRead && skills.length > 0) {
+	if (tools.some((t) => t.name === "read") && skills.length > 0) {
 		skillsSection = formatSkillsForPrompt(skills);
 	}
 
 	const registry = getPromptRegistry();
 	return registry.render("system/coding-agent", {
 		TOOLS_LIST: toolsList,
-		GUIDELINES: guidelines,
 		README_PATH: readmePath,
 		DOCS_PATH: docsPath,
 		EXAMPLES_PATH: examplesPath,

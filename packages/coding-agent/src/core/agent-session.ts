@@ -617,7 +617,7 @@ export class AgentSession {
 		this.agent.setTools(tools);
 
 		// Rebuild base system prompt with new tool set
-		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
+		this._baseSystemPrompt = this._rebuildSystemPrompt(tools);
 		this.agent.setSystemPrompt(this._baseSystemPrompt);
 	}
 
@@ -671,8 +671,7 @@ export class AgentSession {
 		return this._resourceLoader.getPrompts().prompts;
 	}
 
-	private _rebuildSystemPrompt(toolNames: string[]): string {
-		const validToolNames = toolNames.filter((name) => this._baseToolRegistry.has(name));
+	private _rebuildSystemPrompt(tools: AgentTool[]): string {
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 		const appendSystemPrompt =
@@ -686,7 +685,7 @@ export class AgentSession {
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt,
-			selectedTools: validToolNames,
+			activeTools: tools.map((t) => ({ name: t.name, description: t.description })),
 		});
 	}
 
@@ -1818,7 +1817,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.agent.state.tools as AgentTool[]);
 		this.agent.setSystemPrompt(this._baseSystemPrompt);
 	}
 
@@ -2056,8 +2055,7 @@ export class AgentSession {
 			this._toolRegistry = toolRegistry;
 		}
 
-		const systemPromptToolNames = Array.from(activeToolNameSet).filter((name) => this._baseToolRegistry.has(name));
-		this._baseSystemPrompt = this._rebuildSystemPrompt(systemPromptToolNames);
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.agent.state.tools as AgentTool[]);
 		this.agent.setSystemPrompt(this._baseSystemPrompt);
 	}
 

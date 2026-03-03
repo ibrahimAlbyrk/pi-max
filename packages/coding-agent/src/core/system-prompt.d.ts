@@ -2,11 +2,16 @@
  * System prompt construction and project context loading
  */
 import { type Skill } from "./skills.js";
+/** Minimal tool info needed for system prompt generation */
+export interface ToolInfo {
+	name: string;
+	description: string;
+}
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
-	/** Tools to include in prompt. Default: [read, bash, edit, write] */
-	selectedTools?: string[];
+	/** Active tools to list in the prompt. Each must have name and description. */
+	activeTools?: ToolInfo[];
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
 	/** Working directory. Default: process.cwd() */
