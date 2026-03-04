@@ -192,6 +192,8 @@ class NextTasksComponent implements Component {
 	private shineTimer: ReturnType<typeof setInterval> | null = null;
 	private store: TaskStore;
 	private collapsed: boolean;
+	/** Override max visible tasks (0 = use default MAX_VISIBLE_TASKS) */
+	maxVisibleOverride = 0;
 
 	// Transition state (collapse/expand)
 	private transitionTimer: ReturnType<typeof setInterval> | null = null;
@@ -388,7 +390,7 @@ class NextTasksComponent implements Component {
 			});
 
 		// ── Distribute MAX_VISIBLE_TASKS slots: in_progress → todo → done ──
-		const effectiveMaxTasks = MAX_VISIBLE_TASKS;
+		const effectiveMaxTasks = this.maxVisibleOverride > 0 ? this.maxVisibleOverride : MAX_VISIBLE_TASKS;
 		
 		const totalAvailable = inProgress.length + todo.length + doneAll.length;
 		let remaining = effectiveMaxTasks;
@@ -399,7 +401,8 @@ class NextTasksComponent implements Component {
 		const visibleTodo = todo.slice(0, remaining);
 		remaining -= visibleTodo.length;
 
-		const doneTasks = doneAll.slice(0, Math.min(remaining, 2)); // done still max 2 within budget
+		const doneLimit = this.maxVisibleOverride > 0 ? remaining : Math.min(remaining, 2);
+		const doneTasks = doneAll.slice(0, doneLimit);
 
 		const overflowCount = totalAvailable - (visibleInProgress.length + visibleTodo.length + doneTasks.length);
 
@@ -570,6 +573,16 @@ export function resetNextTasksWidget(): void {
 	lastKnownTaskIds.clear(); // Clear global state
 }
 
+/** Override max visible tasks for the widget (0 = use default). */
+export function setTaskWidgetMaxVisible(max: number): void {
+	pendingMaxVisibleOverride = max;
+	if (registeredComponent) {
+		registeredComponent.maxVisibleOverride = max;
+	}
+}
+
+let pendingMaxVisibleOverride = 0;
+
 export function updateNextTasksWidget(store: TaskStore, ctx: ExtensionContext, collapsed: boolean): void {
 	if (registeredComponent) {
 		registeredComponent.updateState(store, collapsed);
@@ -585,6 +598,7 @@ export function updateNextTasksWidget(store: TaskStore, ctx: ExtensionContext, c
 		"task-next",
 		(tui: TUI, theme: Theme) => {
 			registeredComponent = new NextTasksComponent(tui, theme, store, collapsed);
+			registeredComponent.maxVisibleOverride = pendingMaxVisibleOverride;
 			return registeredComponent;
 		},
 	);
