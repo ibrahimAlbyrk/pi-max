@@ -2089,8 +2089,8 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/name" || text.startsWith("/name ")) {
-				this.handleNameCommand(text);
+			if (text === "/rename" || text.startsWith("/rename ")) {
+				this.handleRenameCommand(text);
 				this.editor.setText("");
 				return;
 			}
@@ -2109,8 +2109,9 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/fork") {
-				this.showUserMessageSelector();
+			if (text === "/fork" || text.startsWith("/fork ")) {
+				const forkName = text.startsWith("/fork ") ? text.slice(6).trim() : undefined;
+				this.showUserMessageSelector(forkName);
 				this.editor.setText("");
 				return;
 			}
@@ -3589,7 +3590,7 @@ export class InteractiveMode {
 		});
 	}
 
-	private showUserMessageSelector(): void {
+	private showUserMessageSelector(forkName?: string): void {
 		const userMessages = this.session.getUserMessagesForForking();
 
 		if (userMessages.length === 0) {
@@ -3609,11 +3610,16 @@ export class InteractiveMode {
 						return;
 					}
 
+					if (forkName) {
+						this.sessionManager.appendSessionInfo(forkName);
+						this.updateTerminalTitle();
+					}
+
 					this.chatContainer.clear();
 					this.renderInitialMessages();
 					this.editor.setText(result.selectedText);
 					done();
-					this.showStatus("Branched to new session");
+					this.showStatus(forkName ? `Branched to new session: ${forkName}` : "Branched to new session");
 				},
 				() => {
 					done();
@@ -4136,15 +4142,15 @@ export class InteractiveMode {
 		}
 	}
 
-	private handleNameCommand(text: string): void {
-		const name = text.replace(/^\/name\s*/, "").trim();
+	private handleRenameCommand(text: string): void {
+		const name = text.replace(/^\/rename\s*/, "").trim();
 		if (!name) {
 			const currentName = this.sessionManager.getSessionName();
 			if (currentName) {
 				this.chatContainer.addChild(new Spacer(1));
 				this.chatContainer.addChild(new Text(theme.fg("dim", `Session name: ${currentName}`), 1, 0));
 			} else {
-				this.showWarning("Usage: /name <name>");
+				this.showWarning("Usage: /rename <name>");
 			}
 			this.ui.requestRender();
 			return;
@@ -4153,7 +4159,7 @@ export class InteractiveMode {
 		this.sessionManager.appendSessionInfo(name);
 		this.updateTerminalTitle();
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("dim", `Session name set: ${name}`), 1, 0));
+		this.chatContainer.addChild(new Text(theme.fg("dim", `Session renamed: ${name}`), 1, 0));
 		this.ui.requestRender();
 	}
 
