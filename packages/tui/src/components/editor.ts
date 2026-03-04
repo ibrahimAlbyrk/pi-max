@@ -706,8 +706,12 @@ export class Editor implements Component, Focusable {
 		// Arrow key navigation (with history and boundary scroll support)
 		if (kb.matches(data, "cursorUp")) {
 			if (this.isEditorEmpty()) {
-				// Empty editor: try boundary scroll first, then history
-				if (this.historyIndex === -1 && this.onBoundaryScroll?.(-1)) {
+				// Empty editor: if a boundary scroll handler is registered, always delegate to it.
+				// Do NOT fall through to history navigation — that would cause spurious history
+				// cycling when scroll wheel events are misrouted to the editor (e.g. when mouse
+				// reporting is temporarily disabled by the terminal).
+				if (this.onBoundaryScroll) {
+					this.onBoundaryScroll(-1);
 					return;
 				}
 				this.navigateHistory(-1);
