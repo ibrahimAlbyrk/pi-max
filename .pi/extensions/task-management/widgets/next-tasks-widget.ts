@@ -451,7 +451,7 @@ class NextTasksComponent implements Component {
 		// ── Build task lines ──
 		// Each entry is { content, agentTag } — agent tag is kept separate
 		// so it survives the fade effect (applyFade strips ANSI from content).
-		const taskLines: { content: string; agentTag: string }[] = [];
+		const taskLines: { content: string; agentTag: string; isDone?: boolean }[] = [];
 
 		for (let idx = 0; idx < visibleInProgress.length; idx++) {
 			const t = visibleInProgress[idx];
@@ -485,7 +485,7 @@ class NextTasksComponent implements Component {
 
 			const baseContent = `${icon} ${id}   ${title}`;
 			const animatedContent = this.renderTaskLineWithAnimation(baseContent, t.id);
-			if (animatedContent) taskLines.push({ content: animatedContent, agentTag: renderAgentTag(t) });
+			if (animatedContent) taskLines.push({ content: animatedContent, agentTag: renderAgentTag(t), isDone: true });
 		}
 
 		if (taskLines.length === 0) return [];
@@ -544,9 +544,10 @@ class NextTasksComponent implements Component {
 		const fadeCount = 3;
 		const fadeStart = Math.max(0, linesToShow.length - fadeCount);
 		for (let i = 0; i < linesToShow.length; i++) {
-			const { content, agentTag } = linesToShow[i];
+			const { content, agentTag, isDone } = linesToShow[i];
 			const fadeIndex = i >= fadeStart ? i - fadeStart + 1 : 0;
-			const fadedContent = fadeIndex > 0 ? applyFade(content, fadeIndex) : content;
+			// Skip fade for done tasks — they are already dim + strikethrough
+			const fadedContent = fadeIndex > 0 && !isDone ? applyFade(content, fadeIndex) : content;
 			lines.push(th.fg("borderMuted", "  │ ") + fadedContent + agentTag);
 		}
 
