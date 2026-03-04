@@ -1,4 +1,5 @@
 import {
+	deleteKittyImage,
 	getCapabilities,
 	getImageDimensions,
 	type ImageDimensions,
@@ -77,16 +78,23 @@ export class Image implements Component {
 					this.imageId = result.imageId;
 				}
 
-				// Return `rows` lines so TUI accounts for image height
-				// First (rows-1) lines are empty (TUI clears them)
-				// Last line: move cursor back up, then output image sequence
-				lines = [];
+				// Prepend a delete command for this image's previous placement.
+				// In region mode (alternate screen), the TUI uses absolute cursor positioning.
+				// When content scrolls, old Kitty image placements persist at their previous
+				// screen positions because \x1b[2K only clears text, not the graphics layer.
+				// By embedding the delete in the line itself, we ensure the old placement is
+				// removed whenever this line is re-rendered at a new position.
+				const deleteOld = this.imageId ? deleteKittyImage(this.imageId) : "";
+
+				// Image sequence is on the FIRST line so it renders as soon as the
+				// top of the image enters the viewport (partial visibility on scroll).
+				// The Kitty sequence uses C=1 (no cursor movement after display),
+				// so subsequent empty spacer lines render at the correct positions.
+				// Remaining (rows-1) empty lines reserve vertical space for the image.
+				lines = [deleteOld + result.sequence];
 				for (let i = 0; i < result.rows - 1; i++) {
 					lines.push("");
 				}
-				// Move cursor up to first row, then output image
-				const moveUp = result.rows > 1 ? `\x1b[${result.rows - 1}A` : "";
-				lines.push(moveUp + result.sequence);
 			} else {
 				const fallback = imageFallback(this.mimeType, this.dimensions, this.options.filename);
 				lines = [this.theme.fallbackColor(fallback)];

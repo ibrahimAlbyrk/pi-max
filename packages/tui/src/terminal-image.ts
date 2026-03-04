@@ -113,7 +113,7 @@ export function encodeKitty(
 ): string {
 	const CHUNK_SIZE = 4096;
 
-	const params: string[] = ["a=T", "f=100", "q=2"];
+	const params: string[] = ["a=T", "f=100", "q=2", "C=1"];
 
 	if (options.columns) params.push(`c=${options.columns}`);
 	if (options.rows) params.push(`r=${options.rows}`);
@@ -144,6 +144,20 @@ export function encodeKitty(
 	}
 
 	return chunks.join("");
+}
+
+/**
+ * Extract the Kitty image ID from a line containing a Kitty graphics sequence.
+ * Returns undefined if the line is not a Kitty image line or has no ID.
+ */
+export function extractKittyImageId(line: string): number | undefined {
+	const kittyIdx = line.indexOf(KITTY_PREFIX);
+	if (kittyIdx === -1) return undefined;
+	const semiIdx = line.indexOf(";", kittyIdx);
+	if (semiIdx === -1) return undefined;
+	const params = line.substring(kittyIdx + KITTY_PREFIX.length, semiIdx);
+	const match = params.match(/(?:^|,)i=(\d+)/);
+	return match ? Number.parseInt(match[1], 10) : undefined;
 }
 
 /**
@@ -355,9 +369,11 @@ export function renderImage(
 	const rows = calculateImageRows(imageDimensions, maxWidth, getCellDimensions());
 
 	if (caps.images === "kitty") {
-		// Only use imageId if explicitly provided - static images don't need IDs
-		const sequence = encodeKitty(base64Data, { columns: maxWidth, rows, imageId: options.imageId });
-		return { sequence, rows, imageId: options.imageId };
+		// Always allocate an imageId for Kitty — needed for targeted cleanup
+		// when images move position during scrolling (ghost artifact prevention).
+		const imageId = options.imageId ?? allocateImageId();
+		const sequence = encodeKitty(base64Data, { columns: maxWidth, rows, imageId });
+		return { sequence, rows, imageId };
 	}
 
 	if (caps.images === "iterm2") {

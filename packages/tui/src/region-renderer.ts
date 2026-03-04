@@ -13,7 +13,13 @@
 
 import type { RegionLayout } from "./layout.js";
 import type { Terminal } from "./terminal.js";
-import { isImageLine } from "./terminal-image.js";
+import {
+	deleteAllKittyImages,
+	deleteKittyImage,
+	extractKittyImageId,
+	getCapabilities,
+	isImageLine,
+} from "./terminal-image.js";
 import { visibleWidth } from "./utils.js";
 
 /** Stored state for differential rendering */
@@ -48,15 +54,25 @@ export class RegionRenderer {
 	 */
 	renderAll(layouts: RegionLayout[], termWidth: number, force = false): void {
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
+		const isKitty = getCapabilities().images === "kitty";
 
 		if (force) {
 			// Full repaint: clear screen and render everything
+			// Delete all Kitty graphics before clearing — \x1b[2J only clears text, not image overlays
+			if (isKitty) buffer += deleteAllKittyImages();
 			buffer += "\x1b[2J"; // Clear screen (not scrollback)
 			for (const layout of layouts) {
 				buffer += this.paintRegion(layout, termWidth);
 				this.saveState(layout);
 			}
 		} else {
+			// Targeted Kitty image cleanup: delete only images whose IDs left the viewport.
+			// Images embed their own deleteKittyImage(id) when re-rendered at a new position.
+			// Here we only clean up images that are no longer present at all.
+			if (isKitty) {
+				buffer += this.computeImageCleanup(layouts);
+			}
+
 			// Differential: only repaint changed regions/lines
 			for (const layout of layouts) {
 				const prev = this.previousStates.get(layout.region.id);
@@ -165,6 +181,39 @@ export class RegionRenderer {
 					`Components must truncate output to terminal width.`,
 			);
 		}
+	}
+
+	/**
+	 * Compute targeted Kitty image deletion commands.
+	 * Compares image IDs in previous state vs new layouts.
+	 * Only deletes images whose IDs are no longer present (scrolled out completely).
+	 */
+	private computeImageCleanup(layouts: RegionLayout[]): string {
+		const oldIds = new Set<number>();
+		const newIds = new Set<number>();
+
+		// Collect IDs from previous state
+		for (const state of this.previousStates.values()) {
+			for (const line of state.lines) {
+				const id = extractKittyImageId(line);
+				if (id !== undefined) oldIds.add(id);
+			}
+		}
+
+		// Collect IDs from new layouts
+		for (const layout of layouts) {
+			for (const line of layout.renderedLines) {
+				const id = extractKittyImageId(line);
+				if (id !== undefined) newIds.add(id);
+			}
+		}
+
+		// Delete IDs that are no longer present
+		let cleanup = "";
+		for (const id of oldIds) {
+			if (!newIds.has(id)) cleanup += deleteKittyImage(id);
+		}
+		return cleanup;
 	}
 
 	/**

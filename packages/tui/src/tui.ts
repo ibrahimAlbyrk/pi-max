@@ -10,7 +10,14 @@ import { isKeyRelease, matchesKey } from "./keys.js";
 import { LayoutEngine, type LayoutRegion } from "./layout.js";
 import { ScrollController } from "./scroll-controller.js";
 import type { Terminal } from "./terminal.js";
-import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
+import {
+	deleteAllKittyImages,
+	deleteKittyImage,
+	extractKittyImageId,
+	getCapabilities,
+	isImageLine,
+	setCellDimensions,
+} from "./terminal-image.js";
 import { extractSegments, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
 
 /**
@@ -991,9 +998,12 @@ export class TUI extends Container {
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
 
 		// Helper to clear scrollback and viewport and render all new lines
+		const isKitty = getCapabilities().images === "kitty";
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
+			// Delete Kitty graphics before clearing — \x1b[2J only clears text, not image overlays
+			if (clear && isKitty) buffer += deleteAllKittyImages();
 			if (clear) buffer += "\x1b[3J\x1b[2J\x1b[H"; // Clear scrollback, screen, and home
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
@@ -1126,9 +1136,37 @@ export class TUI extends Container {
 			return;
 		}
 
+		// Targeted Kitty image cleanup: delete only images that left the viewport.
+		// Images embed their own deleteKittyImage(id) in the rendered line, so images that
+		// move position are handled by the component. Here we only clean up images that
+		// are no longer in the rendered output at all (scrolled completely out of view).
+		let imageCleanup = "";
+		if (isKitty) {
+			const oldIds = new Set<number>();
+			const newIds = new Set<number>();
+			for (let i = firstChanged; i <= lastChanged; i++) {
+				const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
+				const newLine = i < newLines.length ? newLines[i] : "";
+				const oldId = extractKittyImageId(oldLine);
+				const newId = extractKittyImageId(newLine);
+				if (oldId !== undefined) oldIds.add(oldId);
+				if (newId !== undefined) newIds.add(newId);
+			}
+			// Also check new lines outside the changed range for IDs still present
+			for (let i = 0; i < newLines.length; i++) {
+				if (i >= firstChanged && i <= lastChanged) continue;
+				const id = extractKittyImageId(newLines[i]);
+				if (id !== undefined) newIds.add(id);
+			}
+			for (const id of oldIds) {
+				if (!newIds.has(id)) imageCleanup += deleteKittyImage(id);
+			}
+		}
+
 		// Render from first changed line to end
 		// Build buffer with all updates wrapped in synchronized output
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
+		if (imageCleanup) buffer += imageCleanup;
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
 		if (moveTargetRow > prevViewportBottom) {
@@ -1352,8 +1390,33 @@ export class TUI extends Container {
 		// Determine if full repaint needed
 		const force = this.previousRegionViewport.length === 0 || this.previousWidth !== width;
 
+		// Check if any changed line involves terminal images.
+		// Terminal image protocols (Kitty/iTerm2) render to a graphics layer that persists
+		// Targeted Kitty image cleanup: delete only images that left the viewport entirely.
+		// Images embed their own deleteKittyImage(id) in the rendered line, so images that
+		// move position are handled by the component. Here we only clean up images whose
+		// IDs are no longer present in the current viewport (scrolled completely out of view).
+		const isKittyRegion = getCapabilities().images === "kitty";
+		let imageCleanup = "";
+		if (isKittyRegion) {
+			const oldIds = new Set<number>();
+			const newIds = new Set<number>();
+			for (const line of this.previousRegionViewport) {
+				const id = extractKittyImageId(line);
+				if (id !== undefined) oldIds.add(id);
+			}
+			for (const line of finalLines) {
+				const id = extractKittyImageId(line);
+				if (id !== undefined) newIds.add(id);
+			}
+			for (const id of oldIds) {
+				if (!newIds.has(id)) imageCleanup += deleteKittyImage(id);
+			}
+		}
+
 		// Render using absolute ANSI cursor positioning
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
+		if (imageCleanup) buffer += imageCleanup;
 
 		if (force) {
 			// Full repaint
