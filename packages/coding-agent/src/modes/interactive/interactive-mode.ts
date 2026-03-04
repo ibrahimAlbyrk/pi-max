@@ -2223,7 +2223,7 @@ export class InteractiveMode {
 				if (text.startsWith("/") || text.startsWith("!")) {
 					this.splashLayout.instantTransition();
 				} else {
-					this.splashLayout.transitionToChat();
+					await this.splashLayout.transitionToChat();
 				}
 			}
 

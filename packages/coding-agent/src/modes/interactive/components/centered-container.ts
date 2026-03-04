@@ -25,6 +25,13 @@ export class CenteredContainer implements Component {
 	private verticalBorders: boolean;
 	private borderColor: (text: string) => string;
 
+	/**
+	 * Overlay for top/bottom border lines during animation.
+	 * Map keys are column indices (0-based within border content area).
+	 * Map values are pre-styled character strings to render at those positions.
+	 */
+	private borderOverlay: Map<number, string> | undefined;
+
 	constructor(child: Component, maxWidth: number, options?: CenteredContainerOptions) {
 		this.child = child;
 		this.maxWidth = maxWidth;
@@ -38,6 +45,10 @@ export class CenteredContainer implements Component {
 
 	setBorderColor(borderColor: (text: string) => string): void {
 		this.borderColor = borderColor;
+	}
+
+	setBorderOverlay(overlay: Map<number, string> | undefined): void {
+		this.borderOverlay = overlay;
 	}
 
 	render(width: number): string[] {
@@ -74,6 +85,17 @@ export class CenteredContainer implements Component {
 		return lines.map((line, i) => {
 			const lineVw = visibleWidth(line);
 			const padRight = Math.max(0, contentWidth - lineVw);
+
+			if ((i === 0 || i === lines.length - 1) && this.borderOverlay) {
+				// Overlay active: generate custom border line with highlighted positions
+				let border = "";
+				for (let col = 0; col < contentWidth; col++) {
+					const overlayChar = this.borderOverlay.get(col);
+					border += overlayChar ?? this.borderColor("─");
+				}
+				const [c1, c2] = i === 0 ? ["┏", "┓"] : ["┗", "┛"];
+				return leftPad + this.borderColor(c1) + border + this.borderColor(c2);
+			}
 
 			if (i === 0) {
 				// Top line: editor draws ─── border, we wrap with heavy corners

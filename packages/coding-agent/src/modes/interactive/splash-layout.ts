@@ -1,13 +1,58 @@
 import { type Component, type Container, Spacer, type TUI, visibleWidth } from "@mariozechner/pi-tui";
 import { CenteredContainer } from "./components/centered-container.js";
-import { SplashLogo } from "./components/splash-logo.js";
+import { getLogoHeight, SplashLogo } from "./components/splash-logo.js";
 import { theme } from "./theme/theme.js";
 
 /** Max width for the editor in splash mode */
 const SPLASH_EDITOR_MAX_WIDTH = 72;
 
 /** Animation frame timing in ms */
-const FRAME_MS = 50;
+const FRAME_MS = 30;
+
+/** Max dissolve level before a logo row is fully gone */
+const MAX_DISSOLVE = 5;
+
+/** Traveling light speed (columns per frame) */
+const LIGHT_SPEED = 3;
+
+/** Trail characters from head to tail */
+const TRAIL_CHARS = ["█", "▓", "▒", "░"];
+
+/**
+ * Compute border overlay for the traveling light effect.
+ * Two lights start at center of the border and travel outward (left and right).
+ * Each light has a fading trail behind it.
+ */
+function computeBorderOverlay(waveDistance: number, contentWidth: number): Map<number, string> {
+	const center = Math.floor(contentWidth / 2);
+	const overlay = new Map<number, string>();
+
+	const colors = [
+		(s: string) => theme.bold(theme.fg("text", s)),
+		(s: string) => theme.fg("text", s),
+		(s: string) => theme.fg("muted", s),
+		(s: string) => theme.fg("dim", s),
+	];
+
+	for (let t = 0; t < TRAIL_CHARS.length; t++) {
+		const dist = waveDistance - t;
+		if (dist < 0) continue;
+
+		// Right-going light
+		const rightPos = center + dist;
+		if (rightPos >= 0 && rightPos < contentWidth) {
+			overlay.set(rightPos, colors[t](TRAIL_CHARS[t]));
+		}
+
+		// Left-going light
+		const leftPos = center - dist;
+		if (leftPos >= 0 && leftPos < contentWidth && leftPos !== rightPos) {
+			overlay.set(leftPos, colors[t](TRAIL_CHARS[t]));
+		}
+	}
+
+	return overlay;
+}
 
 export interface SplashLayoutOptions {
 	ui: TUI;
@@ -144,6 +189,7 @@ export class SplashLayout {
 	private active = false;
 	private animating = false;
 	private animationTimer: ReturnType<typeof setTimeout> | undefined;
+	private animationResolve: (() => void) | undefined;
 
 	constructor(options: SplashLayoutOptions) {
 		this.ui = options.ui;
@@ -229,34 +275,87 @@ export class SplashLayout {
 	}
 
 	/**
-	 * Transition from splash to chat layout with animation.
+	 * Transition from splash to chat layout with traveling light + shockwave animation.
+	 * Returns a promise that resolves when the animation completes and the chat layout is ready.
+	 *
+	 * Sequence:
+	 *   Phase 1: Two lights emerge from center of input bar borders, travel to edges
+	 *   Phase 2: Logo dissolves bottom-to-top with character density fade
 	 */
-	transitionToChat(): void {
-		if (!this.active || this.animating) return;
-		this.animating = true;
+	transitionToChat(): Promise<void> {
+		if (!this.active || this.animating) return Promise.resolve();
 
-		let frame = 0;
+		return new Promise<void>((resolve) => {
+			this.animationResolve = resolve;
+			this.animating = true;
 
-		const nextFrame = () => {
-			frame++;
+			const termWidth = this.ui.terminal.columns;
+			const contentWidth = Math.min(termWidth - 2, Math.max(1, SPLASH_EDITOR_MAX_WIDTH - 2));
+			const center = Math.floor(contentWidth / 2);
+			const maxDistance = center + TRAIL_CHARS.length;
+			const logoRows = getLogoHeight();
 
-			if (frame === 1) {
-				// Frame 1: Dim the logo
-				this.logo.setDimmed(true);
-				this.ui.requestRender();
-				this.animationTimer = setTimeout(nextFrame, FRAME_MS);
-			} else if (frame === 2) {
-				// Frame 2: Hide logo
-				this.logo.setHidden(true);
-				this.ui.requestRender();
-				this.animationTimer = setTimeout(nextFrame, FRAME_MS);
-			} else {
-				// Frame 3: Switch to chat layout
-				this.finishTransition();
-			}
-		};
+			let phase: "light" | "dissolve" = "light";
+			let waveDistance = 0;
+			let dissolveFrame = 0;
 
-		this.animationTimer = setTimeout(nextFrame, FRAME_MS);
+			const nextFrame = () => {
+				if (phase === "light") {
+					waveDistance += LIGHT_SPEED;
+
+					const overlay = computeBorderOverlay(waveDistance, contentWidth);
+					this.centeredEditor.setBorderOverlay(overlay.size > 0 ? overlay : undefined);
+					this.ui.requestRender();
+
+					if (waveDistance >= maxDistance) {
+						// Light phase complete
+						phase = "dissolve";
+						this.centeredEditor.setBorderOverlay(undefined);
+					}
+
+					this.animationTimer = setTimeout(nextFrame, FRAME_MS);
+				} else {
+					dissolveFrame++;
+
+					if (dissolveFrame === 1) {
+						// Info text dims
+						this.logo.setInfoDissolve(1);
+					} else if (dissolveFrame === 2) {
+						// Info hidden, start logo wave
+						this.logo.setInfoDissolve(2);
+						this.logo.setRowDissolve(logoRows - 1, 1);
+					} else {
+						// Shockwave propagates upward
+						const wf = dissolveFrame - 2;
+						let allDone = true;
+
+						for (let row = logoRows - 1; row >= 0; row--) {
+							const rowAge = wf - (logoRows - 1 - row);
+							if (rowAge > 0) {
+								const level = Math.min(rowAge, MAX_DISSOLVE);
+								this.logo.setRowDissolve(row, level);
+								if (level < MAX_DISSOLVE) allDone = false;
+							} else {
+								allDone = false;
+							}
+						}
+
+						if (allDone) {
+							this.logo.setHidden(true);
+							this.finishTransition();
+							this.animationResolve = undefined;
+							resolve();
+							return;
+						}
+					}
+
+					this.ui.requestRender();
+					this.animationTimer = setTimeout(nextFrame, FRAME_MS);
+				}
+			};
+
+			this.animationTimer = setTimeout(nextFrame, FRAME_MS);
+		});
 	}
 
 	/**
@@ -271,7 +370,13 @@ export class SplashLayout {
 			this.animationTimer = undefined;
 		}
 
+		this.logo.setHidden(true);
 		this.finishTransition();
+
+		if (this.animationResolve) {
+			this.animationResolve();
+			this.animationResolve = undefined;
+		}
 	}
 
 	/**
