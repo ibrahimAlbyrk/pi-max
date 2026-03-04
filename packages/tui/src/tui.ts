@@ -541,6 +541,22 @@ export class TUI extends Container {
 			data = filtered;
 		}
 
+		// Handle focus-in/focus-out events (from ?1004h focus reporting)
+		// Focus-in: re-enable mouse reporting (may be lost after tab switch)
+		// Focus-out: consumed silently (don't forward to editor)
+		if (data === "\x1b[I") {
+			if (this.regionMode && this.alternateScreen?.isActive) {
+				// Re-enable SGR mouse reporting (terminal may have dropped it on tab switch)
+				this.terminal.write("\x1b[?1000h\x1b[?1006h");
+				this.requestRender(true);
+			}
+			return;
+		}
+		if (data === "\x1b[O") {
+			// Focus-out — consume silently
+			return;
+		}
+
 		// Handle mouse wheel events in region mode (SGR format: \x1b[<64;col;rowM / \x1b[<65;col;rowM)
 		if (this.regionMode && this.handleMouseWheel(data)) {
 			return;
