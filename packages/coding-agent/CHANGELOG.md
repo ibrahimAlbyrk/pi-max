@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `excludeFromContext` field to `CustomMessage` and `CustomMessageEntry`, allowing extension-injected messages to be displayed in TUI but excluded from LLM context (similar to `!!` bash prefix behavior)
+
 ### Fixed
 
 - Fixed session message persistence ordering by serializing `AgentSession` event processing, preventing `toolResult` entries from being written before their corresponding assistant tool-call messages when extension handlers are asynchronous ([#1717](https://github.com/badlogic/pi-mono/issues/1717))

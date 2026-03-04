@@ -259,7 +259,7 @@ Use `customType` to identify your extension's entries on reload.
 
 ### CustomMessageEntry
 
-Extension-injected messages that DO participate in LLM context.
+Extension-injected messages that participate in the conversation. By default included in LLM context; set `excludeFromContext` to display in TUI only.
 
 ```json
 {"type":"custom_message","id":"i9j0k1l2","parentId":"h8i9j0k1","timestamp":"2024-12-03T14:25:00.000Z","customType":"my-extension","content":"Injected context...","display":true}
@@ -269,6 +269,7 @@ Fields:
 - `content`: String or `(TextContent | ImageContent)[]` (same as UserMessage)
 - `display`: `true` = show in TUI with distinct styling, `false` = hidden
 - `details`: Optional extension-specific metadata (not sent to LLM)
+- `excludeFromContext`: Optional. If `true`, message is displayed in TUI but excluded from LLM context (similar to `!!` bash prefix)
 
 ### LabelEntry
 

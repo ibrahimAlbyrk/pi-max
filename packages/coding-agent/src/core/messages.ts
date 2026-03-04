@@ -50,6 +50,8 @@ export interface CustomMessage<T = unknown> {
 	display: boolean;
 	details?: T;
 	timestamp: number;
+	/** If true, this message is excluded from LLM context (displayed in TUI only) */
+	excludeFromContext?: boolean;
 }
 
 export interface BranchSummaryMessage {
@@ -126,6 +128,7 @@ export function createCustomMessage(
 	display: boolean,
 	details: unknown | undefined,
 	timestamp: string,
+	excludeFromContext?: boolean,
 ): CustomMessage {
 	return {
 		role: "custom",
@@ -134,6 +137,7 @@ export function createCustomMessage(
 		display,
 		details,
 		timestamp: new Date(timestamp).getTime(),
+		...(excludeFromContext ? { excludeFromContext } : {}),
 	};
 }
 
@@ -160,6 +164,10 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
+					// Skip messages excluded from context (display-only)
+					if (m.excludeFromContext) {
+						return undefined;
+					}
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
 					return {
 						role: "user",

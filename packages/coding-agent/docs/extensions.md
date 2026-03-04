@@ -404,6 +404,7 @@ pi.on("before_agent_start", async (event, ctx) => {
       customType: "my-extension",
       content: "Additional context for the LLM",
       display: true,
+      // Set excludeFromContext: true to display in TUI but exclude from LLM context
     },
     // Replace the system prompt for this turn (chained across extensions)
     systemPrompt: event.systemPrompt + "\n\nExtra instructions for this turn...",
@@ -924,6 +925,13 @@ pi.sendMessage({
   deliverAs: "steer",
 });
 ```
+
+**Message fields:**
+- `customType` - Identifier for your extension's message type.
+- `content` - String or `(TextContent | ImageContent)[]`.
+- `display` - `true` to show in TUI with distinct styling, `false` to hide from TUI.
+- `details` - Optional extension-specific metadata (not sent to LLM).
+- `excludeFromContext` - Optional. If `true`, message is displayed in TUI but excluded from LLM context. Useful for showing reference information to the user without consuming context tokens. Similar to `!!` bash prefix behavior.
 
 **Options:**
 - `deliverAs` - Delivery mode:
@@ -1822,6 +1830,7 @@ pi.sendMessage({
   content: "Status update",
   display: true,               // Show in TUI
   details: { ... },            // Available in renderer
+  // excludeFromContext: true,  // Optional: display-only, not sent to LLM
 });
 ```
 

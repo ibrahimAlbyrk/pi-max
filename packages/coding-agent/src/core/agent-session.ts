@@ -401,6 +401,7 @@ export class AgentSession {
 					event.message.content,
 					event.message.display,
 					event.message.details,
+					event.message.excludeFromContext,
 				);
 			} else if (
 				event.message.role === "user" ||
@@ -886,6 +887,7 @@ export class AgentSession {
 						display: msg.display,
 						details: msg.details,
 						timestamp: Date.now(),
+						...(msg.excludeFromContext ? { excludeFromContext: msg.excludeFromContext } : {}),
 					});
 				}
 			}
@@ -1093,12 +1095,12 @@ export class AgentSession {
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
-	 * @param message Custom message with customType, content, display, details
+	 * @param message Custom message with customType, content, display, details, excludeFromContext
 	 * @param options.triggerTurn If true and not streaming, triggers a new LLM turn
 	 * @param options.deliverAs Delivery mode: "steer", "followUp", or "nextTurn"
 	 */
 	async sendCustomMessage<T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "excludeFromContext">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void> {
 		const appMessage = {
@@ -1108,6 +1110,7 @@ export class AgentSession {
 			display: message.display,
 			details: message.details,
 			timestamp: Date.now(),
+			...(message.excludeFromContext ? { excludeFromContext: message.excludeFromContext } : {}),
 		} satisfies CustomMessage<T>;
 		if (options?.deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
@@ -1126,6 +1129,7 @@ export class AgentSession {
 				message.content,
 				message.display,
 				message.details,
+				message.excludeFromContext,
 			);
 			this._emit({ type: "message_start", message: appMessage });
 			this._emit({ type: "message_end", message: appMessage });

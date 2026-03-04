@@ -879,7 +879,7 @@ export interface ToolResultEventResult {
 }
 
 export interface BeforeAgentStartEventResult {
-	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
+	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details" | "excludeFromContext">;
 	/** Replace the system prompt for this turn. If multiple extensions return this, they are chained. */
 	systemPrompt?: string;
 }
@@ -1035,9 +1035,12 @@ export interface ExtensionAPI {
 	// Actions
 	// =========================================================================
 
-	/** Send a custom message to the session. */
+	/**
+	 * Send a custom message to the session.
+	 * Set excludeFromContext to true to display in TUI but exclude from LLM context.
+	 */
 	sendMessage<T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "excludeFromContext">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): void;
 
@@ -1260,7 +1263,7 @@ export interface ExtensionShortcut {
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
 export type SendMessageHandler = <T = unknown>(
-	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "excludeFromContext">,
 	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 ) => void;
 
