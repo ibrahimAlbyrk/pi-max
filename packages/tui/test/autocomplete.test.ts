@@ -397,4 +397,83 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(applied.lines[0], '"my folder/test.txt"');
 		});
 	});
+
+	describe("inline slash invocations", () => {
+		const commands = [
+			{ name: "export", description: "Export session" },
+			{ name: "model", description: "Select model" },
+			{ name: "skill:frontend", description: "Frontend skill", inlineInvocable: true },
+			{ name: "skill:backend", description: "Backend skill", inlineInvocable: true },
+			{ name: "git:commit", description: "Git commit prompt", inlineInvocable: true },
+		];
+
+		it("shows all commands at start of line", () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "/";
+			const result = provider.getSuggestions([line], 0, line.length);
+
+			assert.notEqual(result, null);
+			const names = result!.items.map((i) => i.value);
+			assert.ok(names.includes("export"), "Should include built-in commands at start");
+			assert.ok(names.includes("skill:frontend"), "Should include invocable commands at start");
+		});
+
+		it("shows only invocable commands mid-text", () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "fix this bug /";
+			const result = provider.getSuggestions([line], 0, line.length);
+
+			assert.notEqual(result, null);
+			const names = result!.items.map((i) => i.value);
+			assert.ok(!names.includes("export"), "Should NOT include built-in commands mid-text");
+			assert.ok(!names.includes("model"), "Should NOT include built-in commands mid-text");
+			assert.ok(names.includes("skill:frontend"), "Should include invocable commands mid-text");
+			assert.ok(names.includes("git:commit"), "Should include invocable commands mid-text");
+		});
+
+		it("fuzzy filters inline invocable commands", () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "fix /skill:front";
+			const result = provider.getSuggestions([line], 0, line.length);
+
+			assert.notEqual(result, null);
+			const names = result!.items.map((i) => i.value);
+			assert.ok(names.includes("skill:frontend"));
+			assert.ok(!names.includes("skill:backend"));
+		});
+
+		it("applies mid-text completion correctly", () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "fix this /skill:front";
+			const prefix = "/skill:front";
+			const item = { value: "skill:frontend", label: "skill:frontend", description: "Frontend skill" };
+			const result = provider.applyCompletion([line], 0, line.length, item, prefix);
+
+			assert.strictEqual(result.lines[0], "fix this /skill:frontend ");
+			assert.strictEqual(result.cursorCol, "fix this /skill:frontend ".length);
+		});
+
+		it("does not trigger inline slash after non-whitespace", () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "path/to/file";
+			const result = provider.getSuggestions([line], 0, line.length);
+
+			// Should not return slash command suggestions for file paths
+			if (result) {
+				const names = result.items.map((i) => i.value);
+				assert.ok(!names.includes("skill:frontend"), "Should not match file path slashes");
+			}
+		});
+
+		it("handles inline slash on non-first line", () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const lines = ["first line", "second line /skill:"];
+			const result = provider.getSuggestions(lines, 1, lines[1]!.length);
+
+			assert.notEqual(result, null);
+			const names = result!.items.map((i) => i.value);
+			assert.ok(names.includes("skill:frontend"));
+			assert.ok(names.includes("skill:backend"));
+		});
+	});
 });

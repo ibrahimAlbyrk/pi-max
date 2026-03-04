@@ -584,3 +584,80 @@ describe("loadPromptTemplates - recursive directory loading", () => {
 		expect(names).toEqual(["docker/build", "git/commit", "git/hooks/pre-push", "review"]);
 	});
 });
+
+// ============================================================================
+// expandPromptTemplate - Multi-Invocation (mid-text)
+// ============================================================================
+
+describe("expandPromptTemplate - multi-invocation", () => {
+	const templates: PromptTemplate[] = [
+		{
+			name: "review",
+			description: "Review code",
+			content: "Review this code: $@",
+			source: "project",
+			filePath: "/prompts/review.md",
+		},
+		{
+			name: "git/commit",
+			description: "Git commit",
+			content: "Write a commit message for: $@",
+			source: "project",
+			filePath: "/prompts/git/commit.md",
+		},
+		{
+			name: "explain",
+			description: "Explain code",
+			content: "Explain the following: $@",
+			source: "project",
+			filePath: "/prompts/explain.md",
+		},
+		{
+			name: "no-placeholder",
+			description: "No placeholder",
+			content: "Do something useful",
+			source: "project",
+			filePath: "/prompts/no-placeholder.md",
+		},
+	];
+
+	test("should expand a single mid-text invocation", () => {
+		const result = expandPromptTemplate("fix this bug /review the auth module", templates);
+		expect(result).toBe("fix this bug\n\nReview this code: the auth module");
+	});
+
+	test("should expand multiple invocations", () => {
+		const result = expandPromptTemplate("/review the code /git:commit summarize changes", templates);
+		expect(result).toBe("Review this code: the code\n\nWrite a commit message for: summarize changes");
+	});
+
+	test("should preserve text before first invocation", () => {
+		const result = expandPromptTemplate("please /explain this function", templates);
+		expect(result).toBe("please\n\nExplain the following: this function");
+	});
+
+	test("should handle invocation with no arguments at end", () => {
+		const result = expandPromptTemplate("do this /review", templates);
+		expect(result).toBe("do this\n\nReview this code: ");
+	});
+
+	test("should handle text with no invocations", () => {
+		const result = expandPromptTemplate("just normal text here", templates);
+		expect(result).toBe("just normal text here");
+	});
+
+	test("should not match slash in middle of word", () => {
+		const result = expandPromptTemplate("path/review not a command", templates);
+		expect(result).toBe("path/review not a command");
+	});
+
+	test("should handle invocation with no-placeholder template mid-text", () => {
+		const result = expandPromptTemplate("context /no-placeholder extra args", templates);
+		expect(result).toBe("context\n\nDo something useful\n\nextra args");
+	});
+
+	test("should handle three invocations", () => {
+		const result = expandPromptTemplate("/review code /explain logic /git:commit done", templates);
+		expect(result).toBe("Review this code: code\n\nExplain the following: logic\n\nWrite a commit message for: done");
+	});
+});
