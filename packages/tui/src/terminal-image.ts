@@ -113,7 +113,7 @@ export function encodeKitty(
 ): string {
 	const CHUNK_SIZE = 4096;
 
-	const params: string[] = ["a=T", "f=100", "q=2", "C=1"];
+	const params: string[] = ["a=T", "f=100", "q=2"];
 
 	if (options.columns) params.push(`c=${options.columns}`);
 	if (options.rows) params.push(`r=${options.rows}`);
@@ -174,6 +174,63 @@ export function deleteKittyImage(imageId: number): string {
  */
 export function deleteAllKittyImages(): string {
 	return `\x1b_Ga=d,d=A\x1b\\`;
+}
+
+/**
+ * Transmit image data to the terminal without displaying it (Kitty a=t).
+ * The image data is stored and can later be placed with placeKittyImageRow().
+ */
+export function transmitKittyImage(base64Data: string, imageId: number): string {
+	const CHUNK_SIZE = 4096;
+	const params = `a=t,f=100,q=2,i=${imageId}`;
+
+	if (base64Data.length <= CHUNK_SIZE) {
+		return `\x1b_G${params};${base64Data}\x1b\\`;
+	}
+
+	const chunks: string[] = [];
+	let offset = 0;
+	let isFirst = true;
+
+	while (offset < base64Data.length) {
+		const chunk = base64Data.slice(offset, offset + CHUNK_SIZE);
+		const isLast = offset + CHUNK_SIZE >= base64Data.length;
+
+		if (isFirst) {
+			chunks.push(`\x1b_G${params},m=1;${chunk}\x1b\\`);
+			isFirst = false;
+		} else if (isLast) {
+			chunks.push(`\x1b_Gm=0;${chunk}\x1b\\`);
+		} else {
+			chunks.push(`\x1b_Gm=1;${chunk}\x1b\\`);
+		}
+
+		offset += CHUNK_SIZE;
+	}
+
+	return chunks.join("");
+}
+
+/**
+ * Place a sub-region of a previously transmitted Kitty image as a single row.
+ * Used for tiled rendering: each terminal row independently displays its
+ * portion of the image, enabling partial visibility during scrolling.
+ *
+ * @param imageId - ID of the previously transmitted image
+ * @param columns - Display width in terminal columns
+ * @param sourceY - Source pixel Y offset within the image
+ * @param sourceH - Source pixel height to extract
+ */
+export function placeKittyImageRow(imageId: number, columns: number, sourceY: number, sourceH: number): string {
+	return `\x1b_Ga=p,i=${imageId},c=${columns},r=1,y=${sourceY},h=${sourceH},C=1,q=2\x1b\\`;
+}
+
+/**
+ * Delete Kitty placements at the current cursor position.
+ * Used by renderers to clean up image tiles when content changes at a row.
+ */
+export function deleteKittyAtCursor(): string {
+	return `\x1b_Ga=d,d=c\x1b\\`;
 }
 
 export function encodeITerm2(
@@ -354,11 +411,26 @@ export function getImageDimensions(base64Data: string, mimeType: string): ImageD
 	return null;
 }
 
+export interface ImageRenderResult {
+	/** For non-tiled (iTerm2): single escape sequence. For tiled (Kitty): transmit sequence for line 0. */
+	sequence: string;
+	/** Number of terminal rows the image occupies */
+	rows: number;
+	/** Kitty image ID (if applicable) */
+	imageId?: number;
+	/**
+	 * Per-row placement sequences for tiled rendering (Kitty only).
+	 * Each entry is the escape sequence for that row index.
+	 * When set, the Image component should use these instead of the single sequence.
+	 */
+	rowSequences?: string[];
+}
+
 export function renderImage(
 	base64Data: string,
 	imageDimensions: ImageDimensions,
 	options: ImageRenderOptions = {},
-): { sequence: string; rows: number; imageId?: number } | null {
+): ImageRenderResult | null {
 	const caps = getCapabilities();
 
 	if (!caps.images) {
@@ -372,8 +444,20 @@ export function renderImage(
 		// Always allocate an imageId for Kitty — needed for targeted cleanup
 		// when images move position during scrolling (ghost artifact prevention).
 		const imageId = options.imageId ?? allocateImageId();
-		const sequence = encodeKitty(base64Data, { columns: maxWidth, rows, imageId });
-		return { sequence, rows, imageId };
+
+		// Tiled rendering: transmit image data once, then place each row independently.
+		// This enables partial visibility when the image is partially scrolled in/out,
+		// because each row renders its own sub-region of the image.
+		const transmit = transmitKittyImage(base64Data, imageId);
+		const rowSequences: string[] = [];
+		for (let i = 0; i < rows; i++) {
+			const sourceY = Math.round((i * imageDimensions.heightPx) / rows);
+			const sourceYEnd = Math.round(((i + 1) * imageDimensions.heightPx) / rows);
+			const sourceH = sourceYEnd - sourceY;
+			rowSequences.push(placeKittyImageRow(imageId, maxWidth, sourceY, sourceH));
+		}
+
+		return { sequence: transmit, rows, imageId, rowSequences };
 	}
 
 	if (caps.images === "iterm2") {

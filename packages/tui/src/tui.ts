@@ -1136,37 +1136,27 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Targeted Kitty image cleanup: delete only images that left the viewport.
-		// Images embed their own deleteKittyImage(id) in the rendered line, so images that
-		// move position are handled by the component. Here we only clean up images that
-		// are no longer in the rendered output at all (scrolled completely out of view).
-		let imageCleanup = "";
+		// Kitty image cleanup: find dirty images and delete all their placements.
+		const dirtyImageIdsLinear = new Set<number>();
 		if (isKitty) {
-			const oldIds = new Set<number>();
-			const newIds = new Set<number>();
 			for (let i = firstChanged; i <= lastChanged; i++) {
 				const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
 				const newLine = i < newLines.length ? newLines[i] : "";
-				const oldId = extractKittyImageId(oldLine);
-				const newId = extractKittyImageId(newLine);
-				if (oldId !== undefined) oldIds.add(oldId);
-				if (newId !== undefined) newIds.add(newId);
-			}
-			// Also check new lines outside the changed range for IDs still present
-			for (let i = 0; i < newLines.length; i++) {
-				if (i >= firstChanged && i <= lastChanged) continue;
-				const id = extractKittyImageId(newLines[i]);
-				if (id !== undefined) newIds.add(id);
-			}
-			for (const id of oldIds) {
-				if (!newIds.has(id)) imageCleanup += deleteKittyImage(id);
+				if (oldLine !== newLine) {
+					const oldId = extractKittyImageId(oldLine);
+					const newId = extractKittyImageId(newLine);
+					if (oldId !== undefined) dirtyImageIdsLinear.add(oldId);
+					if (newId !== undefined) dirtyImageIdsLinear.add(newId);
+				}
 			}
 		}
 
 		// Render from first changed line to end
 		// Build buffer with all updates wrapped in synchronized output
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
-		if (imageCleanup) buffer += imageCleanup;
+		for (const id of dirtyImageIdsLinear) {
+			buffer += deleteKittyImage(id);
+		}
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
 		if (moveTargetRow > prevViewportBottom) {
@@ -1390,44 +1380,49 @@ export class TUI extends Container {
 		// Determine if full repaint needed
 		const force = this.previousRegionViewport.length === 0 || this.previousWidth !== width;
 
-		// Check if any changed line involves terminal images.
-		// Terminal image protocols (Kitty/iTerm2) render to a graphics layer that persists
-		// Targeted Kitty image cleanup: delete only images that left the viewport entirely.
-		// Images embed their own deleteKittyImage(id) in the rendered line, so images that
-		// move position are handled by the component. Here we only clean up images whose
-		// IDs are no longer present in the current viewport (scrolled completely out of view).
+		// Kitty image cleanup: find "dirty" images (any tile changed position) and
+		// delete ALL placements for those images before re-rendering.
+		// Then force re-render ALL tiles of dirty images (not just changed ones),
+		// because deleteKittyImage removes all placements including unchanged tiles.
 		const isKittyRegion = getCapabilities().images === "kitty";
-		let imageCleanup = "";
-		if (isKittyRegion) {
-			const oldIds = new Set<number>();
-			const newIds = new Set<number>();
-			for (const line of this.previousRegionViewport) {
-				const id = extractKittyImageId(line);
-				if (id !== undefined) oldIds.add(id);
-			}
-			for (const line of finalLines) {
-				const id = extractKittyImageId(line);
-				if (id !== undefined) newIds.add(id);
-			}
-			for (const id of oldIds) {
-				if (!newIds.has(id)) imageCleanup += deleteKittyImage(id);
+		const dirtyImageIds = new Set<number>();
+		if (isKittyRegion && !force) {
+			for (let i = 0; i < Math.max(finalLines.length, this.previousRegionViewport.length); i++) {
+				const oldLine = i < this.previousRegionViewport.length ? this.previousRegionViewport[i] : "";
+				const newLine = i < finalLines.length ? finalLines[i] : "";
+				if (oldLine !== newLine) {
+					const oldId = extractKittyImageId(oldLine);
+					const newId = extractKittyImageId(newLine);
+					if (oldId !== undefined) dirtyImageIds.add(oldId);
+					if (newId !== undefined) dirtyImageIds.add(newId);
+				}
 			}
 		}
 
 		// Render using absolute ANSI cursor positioning
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
-		if (imageCleanup) buffer += imageCleanup;
+
+		// Delete all placements for dirty images (within sync output, so no flicker)
+		for (const id of dirtyImageIds) {
+			buffer += deleteKittyImage(id);
+		}
 
 		if (force) {
-			// Full repaint
+			// Full repaint — delete all images first
+			if (isKittyRegion) buffer += deleteAllKittyImages();
 			for (let i = 0; i < finalLines.length; i++) {
 				buffer += `\x1b[${i + 1};1H\x1b[2K${finalLines[i]}`;
 			}
 		} else {
-			// Differential: only repaint changed lines
+			// Differential: repaint changed lines + force-render dirty image tiles
 			for (let i = 0; i < finalLines.length; i++) {
-				if (i >= this.previousRegionViewport.length || finalLines[i] !== this.previousRegionViewport[i]) {
-					buffer += `\x1b[${i + 1};1H\x1b[2K${finalLines[i]}`;
+				const oldLine = i < this.previousRegionViewport.length ? this.previousRegionViewport[i] : "";
+				const newLine = finalLines[i];
+				const lineId = extractKittyImageId(newLine);
+				const isDirtyImage = lineId !== undefined && dirtyImageIds.has(lineId);
+
+				if (newLine !== oldLine || isDirtyImage) {
+					buffer += `\x1b[${i + 1};1H\x1b[2K${newLine}`;
 				}
 			}
 		}

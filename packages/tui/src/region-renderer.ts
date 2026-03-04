@@ -57,8 +57,7 @@ export class RegionRenderer {
 		const isKitty = getCapabilities().images === "kitty";
 
 		if (force) {
-			// Full repaint: clear screen and render everything
-			// Delete all Kitty graphics before clearing — \x1b[2J only clears text, not image overlays
+			// Full repaint: delete all Kitty graphics + clear screen
 			if (isKitty) buffer += deleteAllKittyImages();
 			buffer += "\x1b[2J"; // Clear screen (not scrollback)
 			for (const layout of layouts) {
@@ -66,22 +65,37 @@ export class RegionRenderer {
 				this.saveState(layout);
 			}
 		} else {
-			// Targeted Kitty image cleanup: delete only images whose IDs left the viewport.
-			// Images embed their own deleteKittyImage(id) when re-rendered at a new position.
-			// Here we only clean up images that are no longer present at all.
+			// Find dirty image IDs: images with any tile that changed position.
+			// Delete ALL placements for dirty images, then force-render all their tiles.
+			const dirtyImageIds = new Set<number>();
 			if (isKitty) {
-				buffer += this.computeImageCleanup(layouts);
+				for (const layout of layouts) {
+					const prev = this.previousStates.get(layout.region.id);
+					if (prev) {
+						this.collectDirtyImageIds(layout, prev, dirtyImageIds);
+					}
+				}
+				// Also check removed regions
+				const currentIds = new Set(layouts.map((l) => l.region.id));
+				for (const [id, state] of this.previousStates) {
+					if (!currentIds.has(id)) {
+						for (const line of state.lines) {
+							const imgId = extractKittyImageId(line);
+							if (imgId !== undefined) dirtyImageIds.add(imgId);
+						}
+					}
+				}
+				for (const id of dirtyImageIds) {
+					buffer += deleteKittyImage(id);
+				}
 			}
 
 			// Differential: only repaint changed regions/lines
 			for (const layout of layouts) {
 				const prev = this.previousStates.get(layout.region.id);
 				if (prev && prev.startRow === layout.startRow && prev.height === layout.height) {
-					// Same position and size — diff individual lines
-					buffer += this.paintRegionDiff(layout, prev, termWidth);
+					buffer += this.paintRegionDiff(layout, prev, termWidth, dirtyImageIds);
 				} else {
-					// Position or size changed — full region repaint
-					// Clear old region area if it existed at a different position
 					if (prev && (prev.startRow !== layout.startRow || prev.height !== layout.height)) {
 						buffer += this.clearRegionArea(prev);
 					}
@@ -106,17 +120,15 @@ export class RegionRenderer {
 
 	/**
 	 * Paint a region fully at its absolute position.
-	 * Lines are padded or truncated to fit the region height.
 	 */
 	private paintRegion(layout: RegionLayout, termWidth: number): string {
 		let buffer = "";
 		const { startRow, height, renderedLines } = layout;
 
 		for (let i = 0; i < height; i++) {
-			const row = startRow + i + 1; // ANSI is 1-indexed
+			const row = startRow + i + 1;
 			const line = i < renderedLines.length ? renderedLines[i] : "";
-
-			buffer += `\x1b[${row};1H\x1b[2K`; // Move + clear line
+			buffer += `\x1b[${row};1H\x1b[2K`;
 			if (line.length > 0) {
 				this.validateLineWidth(line, termWidth, layout.region.id, i);
 				buffer += isImageLine(line) ? line : line + LINE_RESET;
@@ -128,8 +140,14 @@ export class RegionRenderer {
 
 	/**
 	 * Paint only changed lines within a region (differential rendering).
+	 * Also force-renders lines whose image ID is in the dirty set.
 	 */
-	private paintRegionDiff(layout: RegionLayout, prev: RegionState, termWidth: number): string {
+	private paintRegionDiff(
+		layout: RegionLayout,
+		prev: RegionState,
+		termWidth: number,
+		dirtyImageIds: Set<number>,
+	): string {
 		let buffer = "";
 		const { startRow, height, renderedLines } = layout;
 
@@ -137,9 +155,13 @@ export class RegionRenderer {
 			const newLine = i < renderedLines.length ? renderedLines[i] : "";
 			const oldLine = i < prev.lines.length ? prev.lines[i] : "";
 
-			if (newLine !== oldLine) {
-				const row = startRow + i + 1; // ANSI is 1-indexed
-				buffer += `\x1b[${row};1H\x1b[2K`; // Move + clear line
+			// Force-render if this line's image was deleted (dirty)
+			const lineId = extractKittyImageId(newLine);
+			const isDirtyImage = lineId !== undefined && dirtyImageIds.has(lineId);
+
+			if (newLine !== oldLine || isDirtyImage) {
+				const row = startRow + i + 1;
+				buffer += `\x1b[${row};1H\x1b[2K`;
 				if (newLine.length > 0) {
 					this.validateLineWidth(newLine, termWidth, layout.region.id, i);
 					buffer += isImageLine(newLine) ? newLine : newLine + LINE_RESET;
@@ -184,51 +206,26 @@ export class RegionRenderer {
 	}
 
 	/**
-	 * Compute targeted Kitty image deletion commands.
-	 * Compares image IDs in previous state vs new layouts.
-	 * Only deletes images whose IDs are no longer present (scrolled out completely).
+	 * Collect image IDs that have any changed tiles between old and new state.
 	 */
-	private computeImageCleanup(layouts: RegionLayout[]): string {
-		const oldIds = new Set<number>();
-		const newIds = new Set<number>();
-
-		// Collect IDs from previous state
-		for (const state of this.previousStates.values()) {
-			for (const line of state.lines) {
-				const id = extractKittyImageId(line);
-				if (id !== undefined) oldIds.add(id);
+	private collectDirtyImageIds(layout: RegionLayout, prev: RegionState, dirtyIds: Set<number>): void {
+		const height = Math.max(layout.height, prev.height);
+		for (let i = 0; i < height; i++) {
+			const newLine = i < layout.renderedLines.length ? layout.renderedLines[i] : "";
+			const oldLine = i < prev.lines.length ? prev.lines[i] : "";
+			if (newLine !== oldLine) {
+				const oldId = extractKittyImageId(oldLine);
+				const newId = extractKittyImageId(newLine);
+				if (oldId !== undefined) dirtyIds.add(oldId);
+				if (newId !== undefined) dirtyIds.add(newId);
 			}
 		}
-
-		// Collect IDs from new layouts
-		for (const layout of layouts) {
-			for (const line of layout.renderedLines) {
-				const id = extractKittyImageId(line);
-				if (id !== undefined) newIds.add(id);
-			}
-		}
-
-		// Delete IDs that are no longer present
-		let cleanup = "";
-		for (const id of oldIds) {
-			if (!newIds.has(id)) cleanup += deleteKittyImage(id);
-		}
-		return cleanup;
 	}
 
-	/**
-	 * Position the hardware cursor at an absolute row/col.
-	 * Used to place cursor at the input area for IME support.
-	 *
-	 * @param row - 0-indexed row
-	 * @param col - 0-indexed column
-	 */
 	positionCursor(row: number, col: number): void {
-		// ANSI cursor positioning is 1-indexed
 		this.terminal.write(`\x1b[${row + 1};${col + 1}H`);
 	}
 
-	/** Reset all stored state (e.g., after terminal clear or resize) */
 	reset(): void {
 		this.previousStates.clear();
 	}

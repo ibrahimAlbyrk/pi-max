@@ -1,5 +1,4 @@
 import {
-	deleteKittyImage,
 	getCapabilities,
 	getImageDimensions,
 	type ImageDimensions,
@@ -78,22 +77,24 @@ export class Image implements Component {
 					this.imageId = result.imageId;
 				}
 
-				// Prepend a delete command for this image's previous placement.
-				// In region mode (alternate screen), the TUI uses absolute cursor positioning.
-				// When content scrolls, old Kitty image placements persist at their previous
-				// screen positions because \x1b[2K only clears text, not the graphics layer.
-				// By embedding the delete in the line itself, we ensure the old placement is
-				// removed whenever this line is re-rendered at a new position.
-				const deleteOld = this.imageId ? deleteKittyImage(this.imageId) : "";
-
-				// Image sequence is on the FIRST line so it renders as soon as the
-				// top of the image enters the viewport (partial visibility on scroll).
-				// The Kitty sequence uses C=1 (no cursor movement after display),
-				// so subsequent empty spacer lines render at the correct positions.
-				// Remaining (rows-1) empty lines reserve vertical space for the image.
-				lines = [deleteOld + result.sequence];
-				for (let i = 0; i < result.rows - 1; i++) {
-					lines.push("");
+				if (result.rowSequences) {
+					// Tiled rendering (Kitty): each line independently renders its
+					// sub-region of the image. This enables partial visibility when
+					// the image is scrolled in/out — whichever rows are visible in
+					// the viewport will display their portion of the image.
+					// Line 0: transmit image data + place first row
+					// Lines 1+: place subsequent rows (using stored data)
+					lines = [result.sequence + result.rowSequences[0]];
+					for (let i = 1; i < result.rows; i++) {
+						lines.push(result.rowSequences[i]);
+					}
+				} else {
+					// Non-tiled (iTerm2): single sequence on first line with spacers.
+					// iTerm2 images are inline and scroll with text naturally.
+					lines = [result.sequence];
+					for (let i = 0; i < result.rows - 1; i++) {
+						lines.push("");
+					}
 				}
 			} else {
 				const fallback = imageFallback(this.mimeType, this.dimensions, this.options.filename);
