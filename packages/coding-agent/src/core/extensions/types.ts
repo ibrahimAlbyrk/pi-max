@@ -182,6 +182,14 @@ export interface ExtensionUIContext {
 			overlayOptions?: OverlayOptions | (() => OverlayOptions);
 			/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
 			onHandle?: (handle: OverlayHandle) => void;
+			/**
+			 * Fullscreen mode: component takes over both chat and input regions.
+			 * The component must implement `renderChat(width): string[]` and `renderInput(width): string[]`
+			 * to provide content for each region separately. The chat region content is scrollable,
+			 * the input region content is fixed at the bottom.
+			 * Keyboard input is routed to the component's handleInput() as usual.
+			 */
+			fullscreen?: boolean;
 		},
 	): Promise<T>;
 

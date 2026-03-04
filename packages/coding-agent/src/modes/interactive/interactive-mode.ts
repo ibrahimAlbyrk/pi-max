@@ -1843,15 +1843,28 @@ export class InteractiveMode {
 			overlay?: boolean;
 			overlayOptions?: OverlayOptions | (() => OverlayOptions);
 			onHandle?: (handle: OverlayHandle) => void;
+			fullscreen?: boolean;
 		},
 	): Promise<T> {
 		const savedText = this.editor.getText();
 		const isOverlay = options?.overlay ?? false;
+		const isFullscreen = options?.fullscreen ?? false;
+
+		// Save chat container children for fullscreen restore
+		const savedChatChildren = isFullscreen ? [...this.chatContainer.children] : [];
 
 		const restoreEditor = () => {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
 			this.editor.setText(savedText);
+			if (isFullscreen) {
+				this.chatContainer.clear();
+				for (const child of savedChatChildren) {
+					this.chatContainer.addChild(child);
+				}
+				// Reset scroll controller so chat auto-follows after fullscreen exit
+				this.ui.getScrollController("chat")?.scrollToBottom();
+			}
 			this.ui.setFocus(this.editor);
 			this.ui.requestRender();
 		};
@@ -1895,6 +1908,40 @@ export class InteractiveMode {
 						const handle = this.ui.showOverlay(component, resolveOptions());
 						// Expose handle to caller for visibility control
 						options?.onHandle?.(handle);
+					} else if (isFullscreen) {
+						// Fullscreen mode: component provides separate chat and input renders.
+						// The component must implement renderChat(width) and renderInput(width).
+						const fsComponent = component as Component & {
+							renderChat?: (width: number) => string[];
+							renderInput?: (width: number) => string[];
+						};
+
+						// Chat region proxy: renders the component's chat content
+						const chatProxy: Component = {
+							render(width: number): string[] {
+								return fsComponent.renderChat?.(width) ?? fsComponent.render(width);
+							},
+							invalidate(): void {
+								fsComponent.invalidate?.();
+							},
+						};
+
+						// Input region proxy: renders the component's input content
+						const inputProxy: Component = {
+							render(width: number): string[] {
+								return fsComponent.renderInput?.(width) ?? [];
+							},
+							invalidate(): void {
+								// Already handled by chatProxy
+							},
+						};
+
+						this.chatContainer.clear();
+						this.chatContainer.addChild(chatProxy);
+						this.editorContainer.clear();
+						this.editorContainer.addChild(inputProxy);
+						this.ui.setFocus(component);
+						this.ui.requestRender();
 					} else {
 						this.editorContainer.clear();
 						this.editorContainer.addChild(component);

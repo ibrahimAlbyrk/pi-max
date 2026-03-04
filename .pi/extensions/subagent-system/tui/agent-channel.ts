@@ -72,7 +72,7 @@ export class AgentChannelManager {
   /** Last render result from renderAgentPanel — used for viewport-aware navigation */
   private _lastRenderResult: PanelRenderResult | null = null;
 
-  /** Actual rendered content line count from last renderFeedView() — used by scroll() */
+  /** Actual rendered content line count from last renderFeedChat() — used by scroll() fallback */
   private lastRenderedContentCount = 0;
 
   /** Input buffer for the feed panel input area */
@@ -444,13 +444,18 @@ export class AgentChannelManager {
 
     const result = await ctx.ui.custom<string | null>(
       (tui: any, _theme: any, _kb: any, done: (value: string | null) => void) => {
-        let cachedLines: string[] | undefined;
+        let cachedChatLines: string[] | undefined;
+        let cachedInputLines: string[] | undefined;
         let cachedWidth: number | undefined;
         let closed = false;
 
+        // Get the chat region's scroll controller for managed scrolling
+        const scrollCtrl = tui.getScrollController?.("chat");
+
         const refreshTimer = setInterval(() => {
           if (closed) return;
-          cachedLines = undefined;
+          cachedChatLines = undefined;
+          cachedInputLines = undefined;
           cachedWidth = undefined;
           try { tui.requestRender(); } catch { /* noop */ }
         }, REFRESH_INTERVAL_MS);
@@ -463,16 +468,33 @@ export class AgentChannelManager {
         }
 
         function invalidateCache(): void {
-          cachedLines = undefined;
+          cachedChatLines = undefined;
+          cachedInputLines = undefined;
           cachedWidth = undefined;
         }
 
         return {
           render(width: number): string[] {
-            if (cachedLines && cachedWidth === width) return cachedLines;
+            // Fallback for non-fullscreen mode (shouldn't be reached in normal usage)
+            if (cachedChatLines && cachedInputLines && cachedWidth === width) {
+              return [...cachedChatLines, ...cachedInputLines];
+            }
             cachedWidth = width;
-            cachedLines = self.renderFeedView(width);
-            return cachedLines;
+            cachedChatLines = self.renderFeedChat(width);
+            cachedInputLines = self.renderFeedInput(width);
+            return [...cachedChatLines, ...cachedInputLines];
+          },
+          renderChat(width: number): string[] {
+            if (cachedChatLines && cachedWidth === width) return cachedChatLines;
+            cachedWidth = width;
+            cachedChatLines = self.renderFeedChat(width);
+            return cachedChatLines;
+          },
+          renderInput(width: number): string[] {
+            if (cachedInputLines && cachedWidth === width) return cachedInputLines;
+            cachedWidth = width;
+            cachedInputLines = self.renderFeedInput(width);
+            return cachedInputLines;
           },
           handleInput(data: string): boolean {
             // Escape or Shift+Alt+Up always closes (even with text in input)
@@ -483,6 +505,8 @@ export class AgentChannelManager {
               if (self.inputBuffer.trim()) {
                 self.handleSendMessage(agentId);
                 invalidateCache();
+                // Scroll to bottom on send
+                scrollCtrl?.scrollToBottom();
               }
               return true;
             }
@@ -493,17 +517,29 @@ export class AgentChannelManager {
               if (matchesKey(data, "shift+tab")) { closeFeed("prev"); return true; }
             }
 
-            // Helper: scroll + immediate re-render (don't wait for 100ms timer)
+            // Helper: scroll via ScrollController + immediate re-render
             function doScroll(delta: number): boolean {
-              self.scroll(delta);
+              if (scrollCtrl) {
+                if (delta < 0) scrollCtrl.scrollUp(Math.abs(delta));
+                else scrollCtrl.scrollDown(delta);
+              } else {
+                // Fallback to internal scroll for non-region mode
+                self.scroll(delta);
+              }
               invalidateCache();
               tui.requestRender();
               return true;
             }
 
-            // Ctrl+Up/Ctrl+Down or PageUp/PageDown: scroll
-            if (matchesKey(data, "pageup")) return doScroll(-20);
-            if (matchesKey(data, "pagedown")) return doScroll(20);
+            // PageUp/PageDown: scroll
+            if (matchesKey(data, "pageup")) {
+              if (scrollCtrl) { scrollCtrl.pageUp(); invalidateCache(); tui.requestRender(); return true; }
+              return doScroll(-20);
+            }
+            if (matchesKey(data, "pagedown")) {
+              if (scrollCtrl) { scrollCtrl.pageDown(); invalidateCache(); tui.requestRender(); return true; }
+              return doScroll(20);
+            }
             if (data.includes("\x1b[<64;")) return doScroll(-3);
             if (data.includes("\x1b[<65;")) return doScroll(3);
 
@@ -564,12 +600,13 @@ export class AgentChannelManager {
 
             return true;
           },
-          invalidate(): void { cachedLines = undefined; cachedWidth = undefined; },
+          invalidate(): void { cachedChatLines = undefined; cachedInputLines = undefined; cachedWidth = undefined; },
           dispose(): void {
             if (!closed) { closed = true; clearInterval(refreshTimer); }
           },
         };
       },
+      { fullscreen: true },
     );
 
     // Disable mouse tracking when feed panel closes
@@ -613,7 +650,7 @@ export class AgentChannelManager {
 
   /**
    * Adjust scroll offset by delta. Does NOT do bounds checking here —
-   * renderFeedView() does the clamping with the real content line count.
+   * renderFeedChat() does the clamping with the real content line count.
    * This avoids stale lastRenderedContentCount causing snap-back bugs.
    */
   private scroll(delta: number): void {
@@ -628,12 +665,15 @@ export class AgentChannelManager {
 
   // ─── Feed View Rendering ───────────────────────────────────────
 
-  renderFeedView(width: number): string[] {
+  /**
+   * Render the chat region content: header + all message entries.
+   * Scrolling is handled by the chat region's ScrollController.
+   */
+  renderFeedChat(width: number): string[] {
     if (!this.activeChannel) return [];
     const channel = this.channels.get(this.activeChannel);
     if (!channel) return ["  No data for this agent."];
 
-    const termHeight = process.stdout.rows || DEFAULT_HEIGHT;
     const colorInfo = AGENT_COLOR_PALETTE.find((c) => c.name === channel.color) || AGENT_COLOR_PALETTE[0];
     const fg = hexToAnsi(colorInfo.fg);
     const sepFg = hexToAnsi(FEED_FG_SEPARATOR);
@@ -657,40 +697,34 @@ export class AgentChannelManager {
     lines.push(applyLineBg(`${fg}${hLeft}${" ".repeat(hPad)}${hRight}`, FEED_BG_HEADER, width, width));
     lines.push(`${sepFg}${"─".repeat(width)}${ANSI_RESET}`);
 
-    // ── Content ──
+    // ── Content: all entries (ScrollController handles viewport windowing) ──
     const entries = channel.buffer.getEntries();
-    const allContent: string[] = [];
+    const contentStart = lines.length;
     for (const entry of entries) {
       const entryLines = this.renderEntry(entry, width, colorInfo.fg);
-      for (const line of entryLines) allContent.push(truncateToWidth(line, width));
+      for (const line of entryLines) lines.push(truncateToWidth(line, width));
     }
-    if (allContent.length === 0) allContent.push(`  ${ANSI_DIM}Waiting for activity…${ANSI_RESET}`);
+    if (entries.length === 0) lines.push(`  ${ANSI_DIM}Waiting for activity…${ANSI_RESET}`);
 
-    // Store actual content line count for scroll()'s initial position estimate
-    this.lastRenderedContentCount = allContent.length;
+    // Track content line count for fallback scroll logic
+    this.lastRenderedContentCount = lines.length - contentStart;
 
-    // ── Viewport — clamping and snap-to-bottom ──
-    const contentHeight = Math.max(1, termHeight - CHROME_LINES);
-    const total = allContent.length;
-    const maxOffset = Math.max(0, total - contentHeight);
-    let viewStart: number;
+    return lines;
+  }
 
-    if (this.scrollOffset === -1 || !this.userScrolled) {
-      viewStart = maxOffset;
-    } else {
-      viewStart = Math.min(this.scrollOffset, maxOffset);
-      this.scrollOffset = viewStart;
-      if (viewStart >= maxOffset && maxOffset > 0) {
-        this.scrollOffset = -1;
-        this.userScrolled = false;
-        viewStart = maxOffset;
-      }
-    }
+  /**
+   * Render the input region content: input bar + tab bar footer.
+   * This is placed in the fixed input region at the bottom.
+   */
+  renderFeedInput(width: number): string[] {
+    if (!this.activeChannel) return [];
+    const channel = this.channels.get(this.activeChannel);
+    if (!channel) return [];
 
-    const viewEnd = viewStart + contentHeight;
-    const visible = allContent.slice(viewStart, viewEnd);
-    while (visible.length < contentHeight) visible.push("");
-    lines.push(...visible);
+    const colorInfo = AGENT_COLOR_PALETTE.find((c) => c.name === channel.color) || AGENT_COLOR_PALETTE[0];
+    const fg = hexToAnsi(colorInfo.fg);
+    const sepFg = hexToAnsi(FEED_FG_SEPARATOR);
+    const lines: string[] = [];
 
     // ── Input area ──
     const inputAgentActive = channel.lastStatus === "working" || channel.lastStatus === "thinking" || channel.lastStatus === "idle";
@@ -727,18 +761,15 @@ export class AgentChannelManager {
         tabParts.push(`${ANSI_DIM} ${icon} ${ch.name} ${ANSI_RESET}`);
       }
     }
-    const scrollInfo = total > contentHeight
-      ? `${ANSI_DIM}${viewStart + 1}-${Math.min(viewEnd, total)}/${total}${ANSI_RESET}` : "";
     const helpText = `${ANSI_DIM}Shift+↓:back  Tab:next${ANSI_RESET}`;
-    const rSide = scrollInfo ? `${scrollInfo}  ${helpText}` : helpText;
     const tabBar = tabParts.join(`${ANSI_DIM}·${ANSI_RESET}`);
     const tabBarVis = stripAnsi(tabBar).length;
-    const rSideVis = stripAnsi(rSide).length;
-    const fPad = Math.max(1, width - tabBarVis - rSideVis);
-    if (tabBarVis + 1 + rSideVis > width) {
-      lines.push(truncateToWidth(`${tabBar} ${rSide}`, width));
+    const helpVis = stripAnsi(helpText).length;
+    const fPad = Math.max(1, width - tabBarVis - helpVis);
+    if (tabBarVis + 1 + helpVis > width) {
+      lines.push(truncateToWidth(`${tabBar} ${helpText}`, width));
     } else {
-      lines.push(`${tabBar}${" ".repeat(fPad)}${rSide}`);
+      lines.push(`${tabBar}${" ".repeat(fPad)}${helpText}`);
     }
 
     return lines;

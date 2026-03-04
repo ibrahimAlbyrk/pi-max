@@ -1098,7 +1098,7 @@ export default function (pi: ExtensionAPI) {
 			"Browse and search project files with minimal token usage. Navigate layer by layer with depth, or search with fuzzy/regex query. Respects .gitignore.\n\n" +
 			"Browse mode (no query): Use path + depth to explore directories incrementally.\n" +
 			"Search mode (with query): Fuzzy match by default. Wrap in /pattern/ for regex.\n" +
-			"Content mode (with content): Search file contents via ripgrep.\n\n" +
+			"Content mode (with content): Search file contents via ripgrep. Supports regex patterns (e.g., alternation with |, wildcards with .*).\n\n" +
 			"Examples:\n" +
 			'  tree_search()                              → top-level overview\n' +
 			'  tree_search(path="src", depth=1)           → src/ contents\n' +
@@ -1107,6 +1107,7 @@ export default function (pi: ExtensionAPI) {
 			'  tree_search(query="/auth.*middleware/")     → regex search\n' +
 			'  tree_search(query="config", offset=50)     → paginate results\n' +
 			'  tree_search(content="handleAuth")           → content search\n' +
+			'  tree_search(content="TODO|FIXME|HACK")      → content search with regex alternation\n' +
 			'  tree_search(content="TODO", path="src")     → scoped content search',
 		parameters: Type.Object({
 			path: Type.Optional(
@@ -1126,7 +1127,7 @@ export default function (pi: ExtensionAPI) {
 			),
 			content: Type.Optional(
 				Type.String({
-					description: "Search file contents via ripgrep. Returns matching lines grouped by file.",
+					description: "Search file contents via ripgrep. Supports regex (e.g., \"foo|bar\", \"handle.*Error\"). Returns matching lines grouped by file.",
 				}),
 			),
 			type: Type.Optional(
