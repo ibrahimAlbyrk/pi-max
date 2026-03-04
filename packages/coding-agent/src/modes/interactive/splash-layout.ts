@@ -56,7 +56,8 @@ function computeBorderOverlay(waveDistance: number, contentWidth: number): Map<n
 
 export interface SplashLayoutOptions {
 	ui: TUI;
-	editor: Component;
+	/** Returns the current editor component (may change after extensions load) */
+	getEditor: () => Component;
 	editorContainer: Container;
 	footerContainer: Container;
 	headerContainer: Container;
@@ -175,7 +176,7 @@ export class SplashLayout {
 	private splashContainer: VerticallyCenteredContainer;
 	private footerContainer: Container;
 	private editorContainer: Container;
-	private editor: Component;
+	private getEditor: () => Component;
 
 	// References for chat layout restoration
 	private headerContainer: Container;
@@ -193,7 +194,7 @@ export class SplashLayout {
 
 	constructor(options: SplashLayoutOptions) {
 		this.ui = options.ui;
-		this.editor = options.editor;
+		this.getEditor = options.getEditor;
 		this.editorContainer = options.editorContainer;
 		this.footerContainer = options.footerContainer;
 		this.headerContainer = options.headerContainer;
@@ -410,7 +411,7 @@ export class SplashLayout {
 		this.ui.requestRender(true);
 
 		// Restore focus to editor
-		this.ui.setFocus(this.editor);
+		this.ui.setFocus(this.getEditor());
 
 		this.onTransitionComplete();
 	}

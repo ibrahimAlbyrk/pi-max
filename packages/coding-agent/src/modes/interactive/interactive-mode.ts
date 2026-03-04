@@ -425,7 +425,7 @@ export class InteractiveMode {
 
 			this.splashLayout = new SplashLayout({
 				ui: this.ui,
-				editor: this.editor as Component,
+				getEditor: () => this.editor as Component,
 				editorContainer: this.editorContainer,
 				footerContainer: this.footerContainer,
 				headerContainer: this.headerContainer,
