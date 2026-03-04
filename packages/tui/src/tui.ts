@@ -1323,6 +1323,9 @@ export class TUI extends Container {
 		if (this.lastRenderTime > 0 && now - this.lastRenderTime > TUI.STALE_THRESHOLD_MS) {
 			this.previousRegionViewport = [];
 			this.previousWidth = -1;
+			// Fix 1: proactively re-enable mouse reporting when display has been idle
+			// (mouse reporting can be silently dropped by terminals during idle periods)
+			this.terminal.write("\x1b[?1000h\x1b[?1006h");
 		}
 		this.lastRenderTime = now;
 
@@ -1436,8 +1439,10 @@ export class TUI extends Container {
 		}
 
 		if (force) {
-			// Full repaint — clear screen + reset attributes to handle stale terminal state
-			buffer += "\x1b[0m\x1b[2J\x1b[H";
+			// Full repaint — clear screen + reset attributes + re-enable mouse reporting
+			// Mouse reporting can be lost after idle periods, subprocess noise, or terminal resets.
+			// Re-enabling it here (Fix 4) ensures it is always active after any forced repaint.
+			buffer += "\x1b[0m\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h";
 			if (isKittyRegion) buffer += deleteAllKittyImages();
 			for (let i = 0; i < finalLines.length; i++) {
 				buffer += `\x1b[${i + 1};1H\x1b[2K${finalLines[i]}`;
