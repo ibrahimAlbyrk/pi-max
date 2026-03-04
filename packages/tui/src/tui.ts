@@ -228,6 +228,9 @@ export class TUI extends Container {
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
 	private stopped = false;
+	private lastRenderTime = 0;
+	/** If no render happened for this long, next render forces a full repaint (handles stale terminal after tab switch) */
+	private static STALE_THRESHOLD_MS = 1000;
 
 	// Region-based layout (alternate screen mode)
 	private regions: LayoutRegion[] = [];
@@ -545,11 +548,11 @@ export class TUI extends Container {
 		// Focus-in: re-enable mouse reporting (may be lost after tab switch)
 		// Focus-out: consumed silently (don't forward to editor)
 		if (data === "\x1b[I") {
-			if (this.regionMode && this.alternateScreen?.isActive) {
-				// Re-enable SGR mouse reporting (terminal may have dropped it on tab switch)
+			// Re-enable SGR mouse reporting (terminal may have dropped it on tab switch)
+			if (this.regionMode) {
 				this.terminal.write("\x1b[?1000h\x1b[?1006h");
-				this.requestRender(true);
 			}
+			this.requestRender(true);
 			return;
 		}
 		if (data === "\x1b[O") {
@@ -1314,6 +1317,15 @@ export class TUI extends Container {
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 
+		// Detect stale display: if no render happened for a while (e.g., tab switch
+		// on terminals that don't send focus events), force a full repaint
+		const now = Date.now();
+		if (this.lastRenderTime > 0 && now - this.lastRenderTime > TUI.STALE_THRESHOLD_MS) {
+			this.previousRegionViewport = [];
+			this.previousWidth = -1;
+		}
+		this.lastRenderTime = now;
+
 		// Enter alternate screen on first region render
 		if (!this.alternateScreen) {
 			this.alternateScreen = new AlternateScreenManager(this.terminal);
@@ -1424,7 +1436,8 @@ export class TUI extends Container {
 		}
 
 		if (force) {
-			// Full repaint — delete all images first
+			// Full repaint — clear screen + reset attributes to handle stale terminal state
+			buffer += "\x1b[0m\x1b[2J\x1b[H";
 			if (isKittyRegion) buffer += deleteAllKittyImages();
 			for (let i = 0; i < finalLines.length; i++) {
 				buffer += `\x1b[${i + 1};1H\x1b[2K${finalLines[i]}`;
