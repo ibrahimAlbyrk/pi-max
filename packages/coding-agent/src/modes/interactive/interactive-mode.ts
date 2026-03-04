@@ -104,6 +104,7 @@ import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
+import { SplashLayout } from "./splash-layout.js";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -252,6 +253,9 @@ export class InteractiveMode {
 	// Custom header from extension (undefined = use built-in header)
 	private customHeader: (Component & { dispose?(): void }) | undefined = undefined;
 
+	// Splash screen layout (shown on fresh sessions)
+	private splashLayout: SplashLayout | undefined = undefined;
+
 	// Convenience accessors
 	private get agent() {
 		return this.session.agent;
@@ -391,23 +395,130 @@ export class InteractiveMode {
 		const [fdPath] = await Promise.all([ensureTool("fd"), ensureTool("rg")]);
 		this.fdPath = fdPath;
 
-		// Set up region-based layout (alternate screen mode)
-		// Chat region (scrollable): header + messages + status
-		// Input region (fixed bottom): widgets + editor + footer
-		this.ui.addRegion({
-			id: "chat",
-			components: [this.headerContainer, this.chatContainer, this.pendingMessagesContainer, this.statusContainer],
-			sizing: "flex",
-			scrollable: true,
-			minHeight: 3,
-		});
-		this.ui.addRegion({
-			id: "input",
-			components: [this.widgetContainerAbove, this.editorContainer, this.widgetContainerBelow, this.footerContainer],
-			sizing: "fixed",
+		// Determine if splash screen should be shown:
+		// - Fresh session (no history)
+		// - Not quiet mode
+		// - No initial message provided (would start processing immediately)
+		const hasMessageHistory = this.sessionManager
+			.getEntries()
+			.some((e) => e.type === "message" || e.type === "compaction");
+		const hasInitialMessage = !!(this.options.initialMessage || this.options.initialMessages?.length);
+		const isQuiet = !this.options.verbose && this.settingsManager.getQuietStartup();
+		const showSplash = !hasMessageHistory && !hasInitialMessage && !isQuiet;
+
+		// Build header content (used in both splash and chat layouts)
+		this.buildHeader();
+
+		if (showSplash) {
+			// Splash layout: centered logo + editor
+			const state = this.session.state;
+			const modelId = state.model?.id || "no model";
+			const provider = state.model?.provider || "";
+			const thinkingLevel = state.thinkingLevel || "";
+
+			const kb = this.keybindings;
+			const hints = [
+				`${appKey(kb, "selectModel")} model`,
+				`${appKey(kb, "cycleThinkingLevel")} thinking`,
+				"/ commands",
+			].join("  ");
+
+			this.splashLayout = new SplashLayout({
+				ui: this.ui,
+				editor: this.editor as Component,
+				editorContainer: this.editorContainer,
+				footerContainer: this.footerContainer,
+				headerContainer: this.headerContainer,
+				chatContainer: this.chatContainer,
+				pendingMessagesContainer: this.pendingMessagesContainer,
+				statusContainer: this.statusContainer,
+				widgetContainerAbove: this.widgetContainerAbove,
+				widgetContainerBelow: this.widgetContainerBelow,
+				version: this.version,
+				modelId,
+				provider,
+				thinkingLevel,
+				hints,
+				tip: "",
+				borderColor: this.defaultEditor.borderColor,
+				onTransitionComplete: () => {
+					// Restore default task widget limit
+					this.setTaskWidgetMaxVisible(0);
+					this.renderWidgets();
+				},
+			});
+			this.splashLayout.show();
+		} else {
+			// Standard two-region layout (alternate screen mode)
+			// Chat region (scrollable): header + messages + status
+			// Input region (fixed bottom): widgets + editor + footer
+			this.ui.addRegion({
+				id: "chat",
+				components: [this.headerContainer, this.chatContainer, this.pendingMessagesContainer, this.statusContainer],
+				sizing: "flex",
+				scrollable: true,
+				minHeight: 3,
+			});
+			this.ui.addRegion({
+				id: "input",
+				components: [
+					this.widgetContainerAbove,
+					this.editorContainer,
+					this.widgetContainerBelow,
+					this.footerContainer,
+				],
+				sizing: "fixed",
+			});
+			this.renderWidgets(); // Initialize with default spacer
+		}
+
+		this.ui.setFocus(this.editor);
+
+		this.setupKeyHandlers();
+		this.setupEditorSubmitHandler();
+
+		// Initialize extensions first so resources are shown before messages
+		await this.initExtensions();
+
+		// In splash mode, show more tasks in the widget
+		if (this.splashLayout?.isActive()) {
+			this.setTaskWidgetMaxVisible(10);
+		}
+
+		// Render initial messages AFTER showing loaded resources
+		this.renderInitialMessages();
+
+		// Start the UI
+		this.ui.start();
+		this.isInitialized = true;
+
+		// Set terminal title
+		this.updateTerminalTitle();
+
+		// Subscribe to agent events
+		this.subscribeToAgent();
+
+		// Set up theme file watcher
+		onThemeChange(() => {
+			this.ui.invalidate();
+			this.updateEditorBorderColor();
+			this.ui.requestRender();
 		});
 
-		// Add header with keybindings from config (unless silenced)
+		// Set up git branch watcher (uses provider instead of footer)
+		this.footerDataProvider.onBranchChange(() => {
+			this.ui.requestRender();
+		});
+
+		// Initialize available provider count for footer display
+		await this.updateAvailableProviderCount();
+	}
+
+	/**
+	 * Build the header content (logo + keybinding hints + changelog).
+	 * Populates headerContainer with the appropriate components.
+	 */
+	private buildHeader(): void {
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
 			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 
@@ -474,43 +585,31 @@ export class InteractiveMode {
 				this.headerContainer.addChild(new Text(condensedText, 1, 0));
 			}
 		}
+	}
 
-		this.renderWidgets(); // Initialize with default spacer
-		this.ui.setFocus(this.editor);
+	/**
+	 * Update splash screen model info (model, provider, thinking level).
+	 */
+	private updateSplashModelInfo(): void {
+		if (!this.splashLayout?.isActive()) return;
+		const state = this.session.state;
+		this.splashLayout.updateModelInfo(
+			state.model?.id || "no model",
+			state.model?.provider || "",
+			state.thinkingLevel || "",
+		);
+		this.ui.requestRender();
+	}
 
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
-
-		// Initialize extensions first so resources are shown before messages
-		await this.initExtensions();
-
-		// Render initial messages AFTER showing loaded resources
-		this.renderInitialMessages();
-
-		// Start the UI
-		this.ui.start();
-		this.isInitialized = true;
-
-		// Set terminal title
-		this.updateTerminalTitle();
-
-		// Subscribe to agent events
-		this.subscribeToAgent();
-
-		// Set up theme file watcher
-		onThemeChange(() => {
-			this.ui.invalidate();
-			this.updateEditorBorderColor();
-			this.ui.requestRender();
-		});
-
-		// Set up git branch watcher (uses provider instead of footer)
-		this.footerDataProvider.onBranchChange(() => {
-			this.ui.requestRender();
-		});
-
-		// Initialize available provider count for footer display
-		await this.updateAvailableProviderCount();
+	/**
+	 * Set the max visible tasks override on the task widget (if registered).
+	 * 0 = use widget default.
+	 */
+	private setTaskWidgetMaxVisible(max: number): void {
+		const widget = this.extensionWidgetsAbove.get("task-next");
+		if (widget && "maxVisibleOverride" in widget) {
+			(widget as Component & { maxVisibleOverride: number }).maxVisibleOverride = max;
+		}
 	}
 
 	/**
@@ -2117,6 +2216,17 @@ export class InteractiveMode {
 			text = text.trim();
 			if (!text) return;
 
+			// Transition from splash to chat layout on first input
+			if (this.splashLayout?.isActive()) {
+				// Use instant transition for slash commands (they show overlays immediately)
+				// Use animated transition for normal messages
+				if (text.startsWith("/") || text.startsWith("!")) {
+					this.splashLayout.instantTransition();
+				} else {
+					this.splashLayout.transitionToChat();
+				}
+			}
+
 			// Handle commands
 			if (text === "/settings") {
 				this.showSettingsSelector();
@@ -2937,11 +3047,16 @@ export class InteractiveMode {
 	}
 
 	private updateEditorBorderColor(): void {
+		let colorFn: (text: string) => string;
 		if (this.isBashMode) {
-			this.editor.borderColor = theme.getBashModeBorderColor();
+			colorFn = theme.getBashModeBorderColor();
 		} else {
 			const level = this.session.thinkingLevel || "off";
-			this.editor.borderColor = theme.getThinkingBorderColor(level);
+			colorFn = theme.getThinkingBorderColor(level);
+		}
+		this.editor.borderColor = colorFn;
+		if (this.splashLayout?.isActive()) {
+			this.splashLayout.setBorderColor(colorFn);
 		}
 		this.ui.requestRender();
 	}
@@ -2953,6 +3068,7 @@ export class InteractiveMode {
 		} else {
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
+			this.updateSplashModelInfo();
 			this.showStatus(`Thinking level: ${newLevel}`);
 		}
 	}
@@ -2966,6 +3082,7 @@ export class InteractiveMode {
 			} else {
 				this.footer.invalidate();
 				this.updateEditorBorderColor();
+				this.updateSplashModelInfo();
 				const thinkingStr =
 					result.model.reasoning && result.thinkingLevel !== "off" ? ` (thinking: ${result.thinkingLevel})` : "";
 				this.showStatus(`Switched to ${result.model.name || result.model.id}${thinkingStr}`);
