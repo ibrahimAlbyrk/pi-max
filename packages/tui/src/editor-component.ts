@@ -40,6 +40,18 @@ export interface EditorComponent extends Component {
 	addToHistory?(text: string): void;
 
 	// =========================================================================
+	// Scroll boundary support (optional)
+	// =========================================================================
+
+	/**
+	 * Called when arrow up/down is pressed at editor boundary (empty or first/last visual line)
+	 * and not currently browsing history.
+	 * Direction: -1 = up, 1 = down.
+	 * Return true to consume the event (e.g., scrolled the parent region).
+	 */
+	onBoundaryScroll?: (direction: -1 | 1) => boolean;
+
+	// =========================================================================
 	// Advanced text manipulation (optional)
 	// =========================================================================
 

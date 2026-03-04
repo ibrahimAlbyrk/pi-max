@@ -213,6 +213,14 @@ export class Editor implements Component, Focusable {
 	public onChange?: (text: string) => void;
 	public disableSubmit: boolean = false;
 
+	/**
+	 * Called when arrow up/down is pressed at the editor boundary (empty editor or first/last visual line)
+	 * and the editor is NOT currently browsing history.
+	 * Direction: -1 = up, 1 = down.
+	 * Return true to consume the event (e.g., scrolled the chat), false to let the editor handle it normally.
+	 */
+	public onBoundaryScroll?: (direction: -1 | 1) => boolean;
+
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
 		this.tui = tui;
 		this.theme = theme;
@@ -695,14 +703,21 @@ export class Editor implements Component, Focusable {
 			return;
 		}
 
-		// Arrow key navigation (with history support)
+		// Arrow key navigation (with history and boundary scroll support)
 		if (kb.matches(data, "cursorUp")) {
 			if (this.isEditorEmpty()) {
+				// Empty editor: try boundary scroll first, then history
+				if (this.historyIndex === -1 && this.onBoundaryScroll?.(-1)) {
+					return;
+				}
 				this.navigateHistory(-1);
 			} else if (this.historyIndex > -1 && this.isOnFirstVisualLine()) {
 				this.navigateHistory(-1);
 			} else if (this.isOnFirstVisualLine()) {
-				// Already at top - jump to start of line
+				// At top of content: try boundary scroll, else jump to line start
+				if (this.onBoundaryScroll?.(-1)) {
+					return;
+				}
 				this.moveToLineStart();
 			} else {
 				this.moveCursor(-1, 0);
@@ -713,7 +728,10 @@ export class Editor implements Component, Focusable {
 			if (this.historyIndex > -1 && this.isOnLastVisualLine()) {
 				this.navigateHistory(1);
 			} else if (this.isOnLastVisualLine()) {
-				// Already at bottom - jump to end of line
+				// At bottom of content: try boundary scroll, else jump to line end
+				if (this.onBoundaryScroll?.(1)) {
+					return;
+				}
 				this.moveToLineEnd();
 			} else {
 				this.moveCursor(1, 0);

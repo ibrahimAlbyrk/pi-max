@@ -2037,6 +2037,19 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("resume", () => this.showSessionSelector());
 
+		// Arrow up/down at editor boundary scrolls the chat region
+		this.defaultEditor.onBoundaryScroll = (direction: -1 | 1) => {
+			const ctrl = this.ui.getScrollController("chat");
+			if (!ctrl) return false;
+			if (direction === -1) {
+				ctrl.scrollUp(3);
+			} else {
+				ctrl.scrollDown(3);
+			}
+			this.ui.requestRender();
+			return true;
+		};
+
 		// Scroll keybindings for the chat region
 		this.defaultEditor.onAction("scrollUp", () => {
 			this.ui.getScrollController("chat")?.scrollUp(3);
