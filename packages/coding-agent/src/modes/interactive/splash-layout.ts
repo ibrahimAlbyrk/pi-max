@@ -72,6 +72,8 @@ export interface SplashLayoutOptions {
 	thinkingLevel: string;
 	hints: string;
 	tip: string;
+	cwd: string;
+	gitBranch: string;
 	borderColor: (text: string) => string;
 	onTransitionComplete: () => void;
 }
@@ -97,16 +99,93 @@ class RightAlignedText implements Component {
 }
 
 /**
- * A component that vertically centers its main children, with optional bottom
- * children pinned to the bottom of the terminal.
+ * Tip bar pinned to the bottom of the splash screen.
+ * Renders as a centered line with decorative borders.
  *
- * Centering is calculated against the FULL terminal height so the bottom
- * section does not shift the center. The bottom section overlaps the bottom
- * padding area. Only when the bottom section is taller than the available
- * padding does the center shift upward.
+ * Layout: ──── tip · <message> ────
+ */
+class TipBar implements Component {
+	constructor(
+		private tip: string,
+		private maxContentWidth: number,
+	) {}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		if (!this.tip) return [];
+		const contentWidth = Math.min(width, this.maxContentWidth);
+		const leftPad = Math.max(0, Math.floor((width - contentWidth) / 2));
+
+		const label = "tip";
+		const dot = "·";
+		const tipText = this.tip;
+
+		// Middle part: " tip · <message> "
+		const middleLen = 1 + label.length + 1 + dot.length + 1 + visibleWidth(tipText) + 1;
+		const remaining = Math.max(2, contentWidth - middleLen);
+		const leftRuleLen = Math.max(1, Math.floor(remaining / 3));
+		const rightRuleLen = remaining - leftRuleLen;
+
+		const line =
+			theme.fg("dim", "─".repeat(leftRuleLen)) +
+			" " +
+			theme.bold(theme.fg("muted", label)) +
+			" " +
+			theme.fg("dim", dot) +
+			" " +
+			theme.fg("muted", tipText) +
+			" " +
+			theme.fg("dim", "─".repeat(rightRuleLen));
+
+		return [" ".repeat(leftPad) + line];
+	}
+}
+
+/**
+ * Displays cwd (left) and git branch (right) below the input bar, matching the editor's horizontal position.
+ */
+class PathInfoText implements Component {
+	constructor(
+		private path: string,
+		private gitBranch: string,
+		private maxContentWidth: number,
+	) {}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		if (!this.path) return [];
+		const inset = 1;
+		const contentWidth = Math.min(width, this.maxContentWidth) - inset * 2;
+		const leftPad = Math.max(0, Math.floor((width - this.maxContentWidth) / 2)) + inset;
+
+		const left = theme.fg("dim", this.path);
+		const leftVw = visibleWidth(left);
+
+		if (!this.gitBranch) {
+			return [" ".repeat(leftPad) + left];
+		}
+
+		const branchLabel = `⎇ ${this.gitBranch}`;
+		const right = theme.fg("dim", branchLabel);
+		const rightVw = visibleWidth(right);
+		const gap = Math.max(1, contentWidth - leftVw - rightVw);
+
+		return [" ".repeat(leftPad) + left + " ".repeat(gap) + right];
+	}
+}
+
+/**
+ * A component that vertically centers its main children, with optional top
+ * children pinned to the top and bottom children pinned to the bottom.
+ *
+ * Centering is calculated against the FULL terminal height so the top/bottom
+ * sections do not shift the center. They overlap the padding areas.
  *
  * Layout:
- *   [top padding]
+ *   [top children — pinned to top]
+ *   [top padding — reduced by top section height]
  *   [main children — centered on full screen]
  *   [bottom padding — reduced by bottom section height]
  *   [bottom children — pinned to bottom]
@@ -114,6 +193,8 @@ class RightAlignedText implements Component {
 class VerticallyCenteredContainer implements Component {
 	children: Component[] = [];
 	bottomChildren: Component[] = [];
+	/** Overlay line rendered at absolute bottom — steals from the gap, never moves bottomChildren */
+	footerLine: Component | undefined;
 	/** Max lines to render from bottomChildren (0 = unlimited) */
 	maxBottomLines = 0;
 
@@ -127,9 +208,14 @@ class VerticallyCenteredContainer implements Component {
 		this.bottomChildren.push(component);
 	}
 
+	setFooter(component: Component): void {
+		this.footerLine = component;
+	}
+
 	invalidate(): void {
 		for (const child of this.children) child.invalidate();
 		for (const child of this.bottomChildren) child.invalidate();
+		this.footerLine?.invalidate();
 	}
 
 	render(width: number): string[] {
@@ -148,19 +234,35 @@ class VerticallyCenteredContainer implements Component {
 			bottomLines = bottomLines.slice(0, this.maxBottomLines);
 		}
 
+		// Render footer overlay
+		const footerLines = this.footerLine ? this.footerLine.render(width) : [];
+
 		const termHeight = this.ui.terminal.rows;
 		const contentHeight = contentLines.length;
 
-		// Center against full terminal height (ignoring bottom section)
+		// Layout as if footer doesn't exist (bottom children position unchanged)
 		const topPad = Math.max(0, Math.floor((termHeight - contentHeight) / 2));
-		// Bottom padding = remaining space minus bottom section
 		const bottomPad = Math.max(0, termHeight - topPad - contentHeight - bottomLines.length);
 
+		// Build result without footer first
 		const result: string[] = [];
 		for (let i = 0; i < topPad; i++) result.push("");
 		result.push(...contentLines);
 		for (let i = 0; i < bottomPad; i++) result.push("");
 		result.push(...bottomLines);
+
+		// Overlay footer at absolute bottom by replacing the last empty line(s)
+		if (footerLines.length > 0) {
+			for (let fi = footerLines.length - 1; fi >= 0; fi--) {
+				for (let ri = result.length - 1; ri >= 0; ri--) {
+					if (result[ri] === "") {
+						result[ri] = footerLines[fi];
+						break;
+					}
+				}
+			}
+		}
+
 		return result;
 	}
 }
@@ -209,7 +311,6 @@ export class SplashLayout {
 		this.logo = new SplashLogo();
 		this.logo.setModelInfo(options.modelId, options.provider, options.thinkingLevel);
 		this.logo.setHints(options.hints);
-		this.logo.setTip(options.tip);
 
 		// Wrap editor in centering container with box borders
 		this.centeredEditor = new CenteredContainer(this.editorContainer, SPLASH_EDITOR_MAX_WIDTH, {
@@ -225,10 +326,17 @@ export class SplashLayout {
 		this.splashContainer.addChild(this.logo);
 		this.splashContainer.addChild(new Spacer(1));
 		this.splashContainer.addChild(this.centeredEditor);
+		this.splashContainer.addChild(new PathInfoText(options.cwd, options.gitBranch, SPLASH_EDITOR_MAX_WIDTH));
 
-		// Bottom section (pinned to bottom): task widget + version
+		// Bottom section (pinned to bottom): task widget + version + spacer
 		this.splashContainer.addBottomChild(this.widgetContainerAbove);
 		this.splashContainer.addBottomChild(new RightAlignedText(theme.fg("dim", `v${options.version}`)));
+		this.splashContainer.addBottomChild(new Spacer(0));
+
+		// Footer overlay (absolute bottom, does not displace bottom children)
+		if (options.tip) {
+			this.splashContainer.setFooter(new TipBar(options.tip, SPLASH_EDITOR_MAX_WIDTH));
+		}
 	}
 
 	/**

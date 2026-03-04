@@ -39,8 +39,6 @@ function dissolveLine(line: string, level: number): string {
 export class SplashLogo implements Component {
 	private modelInfo = "";
 	private hints = "";
-	private tip = "";
-
 	/** Dim factor for fade-out animation (1 = visible, 0 = hidden) */
 	private dimmed = false;
 	private hidden = false;
@@ -60,10 +58,6 @@ export class SplashLogo implements Component {
 
 	setHints(hints: string): void {
 		this.hints = hints;
-	}
-
-	setTip(tip: string): void {
-		this.tip = tip;
 	}
 
 	setDimmed(dimmed: boolean): void {
@@ -152,16 +146,6 @@ export class SplashLogo implements Component {
 				lines.push("");
 			} else {
 				lines.push(center(theme.fg("dim", this.hints)));
-			}
-		}
-
-		// Tip
-		if (this.tip) {
-			lines.push(""); // spacer
-			if (this.infoDissolveLevel >= 2) {
-				lines.push("");
-			} else {
-				lines.push(center(theme.fg("dim", this.tip)));
 			}
 		}
 

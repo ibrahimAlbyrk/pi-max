@@ -99,6 +99,7 @@ import { ScopedModelsSelectorComponent } from "./components/scoped-models-select
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.js";
+import { getRandomTip } from "./components/splash-tips.js";
 import { TemplateInvocationMessageComponent } from "./components/template-invocation-message.js";
 import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
@@ -439,7 +440,20 @@ export class InteractiveMode {
 				provider,
 				thinkingLevel,
 				hints,
-				tip: "",
+				tip: getRandomTip(kb),
+				cwd: process.cwd(),
+				gitBranch: (() => {
+					try {
+						const branch = spawnSync("git", ["branch", "--show-current"], { encoding: "utf-8", timeout: 2000 });
+						if (branch.status !== 0) return "";
+						const name = branch.stdout.trim();
+						const status = spawnSync("git", ["status", "--porcelain"], { encoding: "utf-8", timeout: 2000 });
+						const dirty = status.status === 0 && status.stdout.trim().length > 0;
+						return dirty ? `${name} *` : name;
+					} catch {
+						return "";
+					}
+				})(),
 				borderColor: this.defaultEditor.borderColor,
 				onTransitionComplete: () => {
 					// Restore default task widget limit
