@@ -156,6 +156,7 @@ export declare class AgentSession {
 	private _scopedModels;
 	private _unsubscribeAgent?;
 	private _eventListeners;
+	private _agentEventQueue;
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages;
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
@@ -164,6 +165,7 @@ export declare class AgentSession {
 	private _pendingNextTurnMessages;
 	private _compactionAbortController;
 	private _autoCompactionAbortController;
+	private _overflowRecoveryAttempted;
 	private _branchSummaryAbortController;
 	private _retryAbortController;
 	private _retryAttempt;
@@ -196,6 +198,9 @@ export declare class AgentSession {
 	private _lastAssistantMessage;
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent;
+	private _createRetryPromiseForAgentEnd;
+	private _findLastAssistantInMessages;
+	private _processAgentEvent;
 	/** Resolve the pending retry promise */
 	private _resolveRetry;
 	/** Extract text content from a message */
@@ -294,8 +299,15 @@ export declare class AgentSession {
 	prompt(text: string, options?: PromptOptions): Promise<void>;
 	private _tryExecuteExtensionCommand;
 	/**
+	 * Expand a single /skill:name invocation to its full content.
+	 * Returns the expanded block, or the original token if skill not found or read fails.
+	 */
+	private _expandSingleSkill;
+	/**
 	 * Expand skill commands (/skill:name args) to their full content.
-	 * Returns the expanded text, or the original text if not a skill command or skill not found.
+	 * Supports multiple /skill: invocations at any position in the text.
+	 * Each invocation's arguments extend until the next /skill: token or end of text.
+	 * Returns the expanded text, or the original text if no skill commands found.
 	 * Emits errors via extension runner if file read fails.
 	 */
 	private _expandSkillCommand;
@@ -608,5 +620,10 @@ export declare class AgentSession {
 	 * Get the extension runner (for setting UI context and error handlers).
 	 */
 	get extensionRunner(): ExtensionRunner | undefined;
+	/**
+	 * Get SDK-level custom tool definitions (registered via customTools config).
+	 * These are not included in extensionRunner.getAllRegisteredTools().
+	 */
+	get customToolDefinitions(): readonly ToolDefinition[];
 }
 //# sourceMappingURL=agent-session.d.ts.map

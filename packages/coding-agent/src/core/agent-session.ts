@@ -934,19 +934,13 @@ export class AgentSession {
 	}
 
 	/**
-	 * Expand skill commands (/skill:name args) to their full content.
-	 * Returns the expanded text, or the original text if not a skill command or skill not found.
-	 * Emits errors via extension runner if file read fails.
+	 * Expand a single /skill:name invocation to its full content.
+	 * Returns the expanded block, or the original token if skill not found or read fails.
 	 */
-	private _expandSkillCommand(text: string): string {
-		if (!text.startsWith("/skill:")) return text;
-
-		const spaceIndex = text.indexOf(" ");
-		const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
-		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
-
+	private _expandSingleSkill(skillToken: string, args: string): string {
+		const skillName = skillToken.slice(7); // Remove "/skill:"
 		const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
-		if (!skill) return text; // Unknown skill, pass through
+		if (!skill) return args ? `${skillToken} ${args}` : skillToken; // Unknown skill, pass through
 
 		try {
 			const content = readFileSync(skill.filePath, "utf-8");
@@ -954,14 +948,50 @@ export class AgentSession {
 			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
 			return args ? `${skillBlock}\n\n${args}` : skillBlock;
 		} catch (err) {
-			// Emit error like extension commands do
 			this._extensionRunner?.emitError({
 				extensionPath: skill.filePath,
 				event: "skill_expansion",
 				error: err instanceof Error ? err.message : String(err),
 			});
-			return text; // Return original on error
+			return args ? `${skillToken} ${args}` : skillToken;
 		}
+	}
+
+	/**
+	 * Expand skill commands (/skill:name args) to their full content.
+	 * Supports multiple /skill: invocations at any position in the text.
+	 * Each invocation's arguments extend until the next /skill: token or end of text.
+	 * Returns the expanded text, or the original text if no skill commands found.
+	 * Emits errors via extension runner if file read fails.
+	 */
+	private _expandSkillCommand(text: string): string {
+		if (!text.includes("/skill:")) return text;
+
+		// Find all /skill:name tokens at word boundaries
+		const pattern = /(?:^|(?<=\s))\/skill:([\w-]+)/g;
+		const matches: Array<{ index: number; fullMatch: string; name: string }> = [];
+		for (const match of text.matchAll(pattern)) {
+			matches.push({ index: match.index, fullMatch: match[0], name: match[1] ?? "" });
+		}
+
+		if (matches.length === 0) return text;
+
+		// Build result: prefix text + expanded segments
+		const parts: string[] = [];
+
+		// Text before first invocation
+		const prefix = text.slice(0, matches[0]!.index).trim();
+		if (prefix) parts.push(prefix);
+
+		for (let i = 0; i < matches.length; i++) {
+			const current = matches[i]!;
+			const argsStart = current.index + current.fullMatch.length;
+			const argsEnd = i + 1 < matches.length ? matches[i + 1]!.index : text.length;
+			const args = text.slice(argsStart, argsEnd).trim();
+			parts.push(this._expandSingleSkill(current.fullMatch, args));
+		}
+
+		return parts.join("\n\n");
 	}
 
 	/**

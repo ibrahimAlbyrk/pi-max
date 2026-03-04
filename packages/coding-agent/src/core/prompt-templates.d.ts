@@ -43,8 +43,9 @@ export interface LoadPromptTemplatesOptions {
  */
 export declare function loadPromptTemplates(options?: LoadPromptTemplatesOptions): PromptTemplate[];
 /**
- * Expand a prompt template if it matches a template name.
- * Returns the expanded content or the original text if not a template.
+ * Expand prompt templates in the text. Supports multiple invocations at any position.
+ * Each invocation's arguments extend until the next recognized template invocation or end of text.
+ * Returns the expanded content or the original text if no templates found.
  *
  * If the template contains no argument placeholders ($1, $@, $ARGUMENTS, ${@:...})
  * and the user provided arguments, they are appended to the end of the content.

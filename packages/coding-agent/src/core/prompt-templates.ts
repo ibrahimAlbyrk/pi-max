@@ -318,34 +318,95 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): P
 const HAS_ARG_PLACEHOLDER = /\$(\d+|@|ARGUMENTS|\{@:[^}]+\})/;
 
 /**
- * Expand a prompt template if it matches a template name.
- * Returns the expanded content or the original text if not a template.
+ * Expand a single template invocation with its arguments.
+ */
+function expandSingleTemplate(template: PromptTemplate, argsString: string): string {
+	const args = parseCommandArgs(argsString);
+	const expanded = substituteArgs(template.content, args);
+
+	// If the template has no placeholders but the user provided args, append them
+	if (args.length > 0 && !HAS_ARG_PLACEHOLDER.test(template.content)) {
+		return `${expanded}\n\n${args.join(" ")}`;
+	}
+
+	return expanded;
+}
+
+/**
+ * Expand prompt templates in the text. Supports multiple invocations at any position.
+ * Each invocation's arguments extend until the next recognized template invocation or end of text.
+ * Returns the expanded content or the original text if no templates found.
  *
  * If the template contains no argument placeholders ($1, $@, $ARGUMENTS, ${@:...})
  * and the user provided arguments, they are appended to the end of the content.
  */
 export function expandPromptTemplate(text: string, templates: PromptTemplate[]): string {
-	if (!text.startsWith("/")) return text;
+	if (!text.includes("/")) return text;
+	if (templates.length === 0) return text;
 
-	const spaceIndex = text.indexOf(" ");
-	const rawName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
-	const argsString = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1);
-
-	// Convert colon separator to slash for nested prompts (e.g., "git:commit" → "git/commit")
-	const templateName = rawName.replace(/:/g, "/");
-
-	const template = templates.find((t) => t.name === templateName);
-	if (template) {
-		const args = parseCommandArgs(argsString);
-		const expanded = substituteArgs(template.content, args);
-
-		// If the template has no placeholders but the user provided args, append them
-		if (args.length > 0 && !HAS_ARG_PLACEHOLDER.test(template.content)) {
-			return `${expanded}\n\n${args.join(" ")}`;
-		}
-
-		return expanded;
+	// Build a map of command name (colon-separated) → template for quick lookup
+	// e.g., "git/commit" template matches "/git:commit" in text
+	const templateByCommand = new Map<string, PromptTemplate>();
+	for (const t of templates) {
+		templateByCommand.set(t.name.replace(/\//g, ":"), t);
 	}
 
-	return text;
+	// Find all template invocation tokens at word boundaries
+	// Pattern: "/" followed by known template command name, at start of text or after whitespace
+	const invocations: Array<{ index: number; matchLength: number; template: PromptTemplate }> = [];
+
+	// Sort template names by length (longest first) to match greedily
+	const sortedNames = [...templateByCommand.keys()].sort((a, b) => b.length - a.length);
+
+	for (const cmdName of sortedNames) {
+		const template = templateByCommand.get(cmdName)!;
+		// Search for /cmdName at word boundaries
+		const token = `/${cmdName}`;
+		let searchStart = 0;
+		while (searchStart < text.length) {
+			const idx = text.indexOf(token, searchStart);
+			if (idx === -1) break;
+
+			// Check word boundary: must be at start or after whitespace
+			const atStart = idx === 0;
+			const afterWhitespace = idx > 0 && (text[idx - 1] === " " || text[idx - 1] === "\t" || text[idx - 1] === "\n");
+			// Check end boundary: must be followed by whitespace or end of text
+			const endIdx = idx + token.length;
+			const atEnd = endIdx >= text.length;
+			const beforeWhitespace =
+				endIdx < text.length && (text[endIdx] === " " || text[endIdx] === "\t" || text[endIdx] === "\n");
+
+			if ((atStart || afterWhitespace) && (atEnd || beforeWhitespace)) {
+				// Check not already covered by a longer match
+				const overlaps = invocations.some((inv) => idx >= inv.index && idx < inv.index + inv.matchLength);
+				if (!overlaps) {
+					invocations.push({ index: idx, matchLength: token.length, template });
+				}
+			}
+
+			searchStart = idx + 1;
+		}
+	}
+
+	if (invocations.length === 0) return text;
+
+	// Sort by position
+	invocations.sort((a, b) => a.index - b.index);
+
+	// Build result: prefix text + expanded segments
+	const parts: string[] = [];
+
+	// Text before first invocation
+	const prefix = text.slice(0, invocations[0]!.index).trim();
+	if (prefix) parts.push(prefix);
+
+	for (let i = 0; i < invocations.length; i++) {
+		const current = invocations[i]!;
+		const argsStart = current.index + current.matchLength;
+		const argsEnd = i + 1 < invocations.length ? invocations[i + 1]!.index : text.length;
+		const argsString = text.slice(argsStart, argsEnd).trim();
+		parts.push(expandSingleTemplate(current.template, argsString));
+	}
+
+	return parts.join("\n\n");
 }

@@ -29,6 +29,7 @@ import { expandPromptTemplate } from "./prompt-templates.js";
 import { getLatestCompactionEntry } from "./session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
+import { askUserTool } from "./tools/ask-user.js";
 import { createAllTools } from "./tools/index.js";
 /**
  * Parse a skill block from message text.
@@ -63,6 +64,7 @@ export class AgentSession {
     // Event subscription state
     _unsubscribeAgent;
     _eventListeners = [];
+    _agentEventQueue = Promise.resolve();
     /** Tracks pending steering messages for UI display. Removed when delivered. */
     _steeringMessages = [];
     /** Tracks pending follow-up messages for UI display. Removed when delivered. */
@@ -72,6 +74,7 @@ export class AgentSession {
     // Compaction state
     _compactionAbortController = undefined;
     _autoCompactionAbortController = undefined;
+    _overflowRecoveryAttempted = false;
     // Branch summarization state
     _branchSummaryAbortController = undefined;
     // Retry state
@@ -109,7 +112,7 @@ export class AgentSession {
         this.settingsManager = config.settingsManager;
         this._scopedModels = config.scopedModels ?? [];
         this._resourceLoader = config.resourceLoader;
-        this._customTools = config.customTools ?? [];
+        this._customTools = [...(config.customTools ?? []), askUserTool];
         this._cwd = config.cwd;
         this._modelRegistry = config.modelRegistry;
         this._extensionRunnerRef = config.extensionRunnerRef;
@@ -139,10 +142,47 @@ export class AgentSession {
     // Track last assistant message for auto-compaction check
     _lastAssistantMessage = undefined;
     /** Internal handler for agent events - shared by subscribe and reconnect */
-    _handleAgentEvent = async (event) => {
+    _handleAgentEvent = (event) => {
+        // Create retry promise synchronously before queueing async processing.
+        // Agent.emit() calls this handler synchronously, and prompt() calls waitForRetry()
+        // as soon as agent.prompt() resolves. If _retryPromise is created only inside
+        // _processAgentEvent, slow earlier queued events can delay agent_end processing
+        // and waitForRetry() can miss the in-flight retry.
+        this._createRetryPromiseForAgentEnd(event);
+        this._agentEventQueue = this._agentEventQueue.then(() => this._processAgentEvent(event), () => this._processAgentEvent(event));
+        // Keep queue alive if an event handler fails
+        this._agentEventQueue.catch(() => { });
+    };
+    _createRetryPromiseForAgentEnd(event) {
+        if (event.type !== "agent_end" || this._retryPromise) {
+            return;
+        }
+        const settings = this.settingsManager.getRetrySettings();
+        if (!settings.enabled) {
+            return;
+        }
+        const lastAssistant = this._findLastAssistantInMessages(event.messages);
+        if (!lastAssistant || !this._isRetryableError(lastAssistant)) {
+            return;
+        }
+        this._retryPromise = new Promise((resolve) => {
+            this._retryResolve = resolve;
+        });
+    }
+    _findLastAssistantInMessages(messages) {
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i];
+            if (message.role === "assistant") {
+                return message;
+            }
+        }
+        return undefined;
+    }
+    async _processAgentEvent(event) {
         // When a user message starts, check if it's from either queue and remove it BEFORE emitting
         // This ensures the UI sees the updated queue state
         if (event.type === "message_start" && event.message.role === "user") {
+            this._overflowRecoveryAttempted = false;
             const messageText = this._getUserMessageText(event.message);
             if (messageText) {
                 // Check steering queue first
@@ -180,9 +220,12 @@ export class AgentSession {
             // Track assistant message for auto-compaction (checked on agent_end)
             if (event.message.role === "assistant") {
                 this._lastAssistantMessage = event.message;
+                const assistantMsg = event.message;
+                if (assistantMsg.stopReason !== "error") {
+                    this._overflowRecoveryAttempted = false;
+                }
                 // Reset retry counter immediately on successful assistant response
                 // This prevents accumulation across multiple LLM calls within a turn
-                const assistantMsg = event.message;
                 if (assistantMsg.stopReason !== "error" && this._retryAttempt > 0) {
                     this._emit({
                         type: "auto_retry_end",
@@ -206,7 +249,7 @@ export class AgentSession {
             }
             await this._checkCompaction(msg);
         }
-    };
+    }
     /** Resolve the pending retry promise */
     _resolveRetry() {
         if (this._retryResolve) {
@@ -422,7 +465,7 @@ export class AgentSession {
         }
         this.agent.setTools(tools);
         // Rebuild base system prompt with new tool set
-        this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
+        this._baseSystemPrompt = this._rebuildSystemPrompt(tools);
         this.agent.setSystemPrompt(this._baseSystemPrompt);
     }
     /** Whether auto-compaction is currently running */
@@ -465,8 +508,7 @@ export class AgentSession {
     get promptTemplates() {
         return this._resourceLoader.getPrompts().prompts;
     }
-    _rebuildSystemPrompt(toolNames) {
-        const validToolNames = toolNames.filter((name) => this._baseToolRegistry.has(name));
+    _rebuildSystemPrompt(tools) {
         const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
         const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
         const appendSystemPrompt = loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined;
@@ -478,7 +520,7 @@ export class AgentSession {
             contextFiles: loadedContextFiles,
             customPrompt: loaderSystemPrompt,
             appendSystemPrompt,
-            selectedTools: validToolNames,
+            activeTools: tools.map((t) => ({ name: t.name, description: t.description })),
         });
     }
     // =========================================================================
@@ -640,19 +682,14 @@ export class AgentSession {
         }
     }
     /**
-     * Expand skill commands (/skill:name args) to their full content.
-     * Returns the expanded text, or the original text if not a skill command or skill not found.
-     * Emits errors via extension runner if file read fails.
+     * Expand a single /skill:name invocation to its full content.
+     * Returns the expanded block, or the original token if skill not found or read fails.
      */
-    _expandSkillCommand(text) {
-        if (!text.startsWith("/skill:"))
-            return text;
-        const spaceIndex = text.indexOf(" ");
-        const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
-        const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
+    _expandSingleSkill(skillToken, args) {
+        const skillName = skillToken.slice(7); // Remove "/skill:"
         const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
         if (!skill)
-            return text; // Unknown skill, pass through
+            return args ? `${skillToken} ${args}` : skillToken; // Unknown skill, pass through
         try {
             const content = readFileSync(skill.filePath, "utf-8");
             const body = stripFrontmatter(content).trim();
@@ -660,14 +697,46 @@ export class AgentSession {
             return args ? `${skillBlock}\n\n${args}` : skillBlock;
         }
         catch (err) {
-            // Emit error like extension commands do
             this._extensionRunner?.emitError({
                 extensionPath: skill.filePath,
                 event: "skill_expansion",
                 error: err instanceof Error ? err.message : String(err),
             });
-            return text; // Return original on error
+            return args ? `${skillToken} ${args}` : skillToken;
         }
+    }
+    /**
+     * Expand skill commands (/skill:name args) to their full content.
+     * Supports multiple /skill: invocations at any position in the text.
+     * Each invocation's arguments extend until the next /skill: token or end of text.
+     * Returns the expanded text, or the original text if no skill commands found.
+     * Emits errors via extension runner if file read fails.
+     */
+    _expandSkillCommand(text) {
+        if (!text.includes("/skill:"))
+            return text;
+        // Find all /skill:name tokens at word boundaries
+        const pattern = /(?:^|(?<=\s))\/skill:([\w-]+)/g;
+        const matches = [];
+        for (const match of text.matchAll(pattern)) {
+            matches.push({ index: match.index, fullMatch: match[0], name: match[1] ?? "" });
+        }
+        if (matches.length === 0)
+            return text;
+        // Build result: prefix text + expanded segments
+        const parts = [];
+        // Text before first invocation
+        const prefix = text.slice(0, matches[0].index).trim();
+        if (prefix)
+            parts.push(prefix);
+        for (let i = 0; i < matches.length; i++) {
+            const current = matches[i];
+            const argsStart = current.index + current.fullMatch.length;
+            const argsEnd = i + 1 < matches.length ? matches[i + 1].index : text.length;
+            const args = text.slice(argsStart, argsEnd).trim();
+            parts.push(this._expandSingleSkill(current.fullMatch, args));
+        }
+        return parts.join("\n\n");
     }
     /**
      * Queue a steering message to interrupt the agent mid-run.
@@ -1256,6 +1325,17 @@ export class AgentSession {
         const errorIsFromBeforeCompaction = compactionEntry !== null && assistantMessage.timestamp < new Date(compactionEntry.timestamp).getTime();
         // Case 1: Overflow - LLM returned context overflow error
         if (sameModel && !errorIsFromBeforeCompaction && isContextOverflow(assistantMessage, contextWindow)) {
+            if (this._overflowRecoveryAttempted) {
+                this._emit({
+                    type: "auto_compaction_end",
+                    result: undefined,
+                    aborted: false,
+                    willRetry: false,
+                    errorMessage: "Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+                });
+                return;
+            }
+            this._overflowRecoveryAttempted = true;
             // Remove the error message from agent state (it IS saved to session for history,
             // but we don't want it in context for the retry)
             const messages = this.agent.state.messages;
@@ -1436,7 +1516,7 @@ export class AgentSession {
             themePaths: this.buildExtensionResourcePaths(themePaths),
         };
         this._resourceLoader.extendResources(extensionPaths);
-        this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+        this._baseSystemPrompt = this._rebuildSystemPrompt(this.agent.state.tools);
         this.agent.setSystemPrompt(this._baseSystemPrompt);
     }
     buildExtensionResourcePaths(entries) {
@@ -1615,7 +1695,7 @@ export class AgentSession {
         }
         const defaultActiveToolNames = this._baseToolsOverride
             ? Object.keys(this._baseToolsOverride)
-            : ["read", "bash", "edit", "write", "webfetch", "websearch"];
+            : ["read", "bash", "edit", "write", "webfetch", "websearch", "ask_user"];
         const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
         const activeToolNameSet = new Set(baseActiveToolNames);
         if (options.includeAllExtensionTools) {
@@ -1639,8 +1719,7 @@ export class AgentSession {
             this.agent.setTools(activeToolsArray);
             this._toolRegistry = toolRegistry;
         }
-        const systemPromptToolNames = Array.from(activeToolNameSet).filter((name) => this._baseToolRegistry.has(name));
-        this._baseSystemPrompt = this._rebuildSystemPrompt(systemPromptToolNames);
+        this._baseSystemPrompt = this._rebuildSystemPrompt(this.agent.state.tools);
         this.agent.setSystemPrompt(this._baseSystemPrompt);
     }
     async reload() {
@@ -1687,15 +1766,18 @@ export class AgentSession {
      */
     async _handleRetryableError(message) {
         const settings = this.settingsManager.getRetrySettings();
-        if (!settings.enabled)
+        if (!settings.enabled) {
+            this._resolveRetry();
             return false;
-        this._retryAttempt++;
-        // Create retry promise on first attempt so waitForRetry() can await it
-        if (this._retryAttempt === 1 && !this._retryPromise) {
+        }
+        // Retry promise is created synchronously in _handleAgentEvent for agent_end.
+        // Keep a defensive fallback here in case a future refactor bypasses that path.
+        if (!this._retryPromise) {
             this._retryPromise = new Promise((resolve) => {
                 this._retryResolve = resolve;
             });
         }
+        this._retryAttempt++;
         if (this._retryAttempt > settings.maxRetries) {
             // Max retries exceeded, emit final failure and reset
             this._emit({
@@ -2348,6 +2430,13 @@ export class AgentSession {
      */
     get extensionRunner() {
         return this._extensionRunner;
+    }
+    /**
+     * Get SDK-level custom tool definitions (registered via customTools config).
+     * These are not included in extensionRunner.getAllRegisteredTools().
+     */
+    get customToolDefinitions() {
+        return this._customTools;
     }
 }
 //# sourceMappingURL=agent-session.js.map
