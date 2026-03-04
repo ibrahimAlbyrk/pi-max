@@ -693,6 +693,7 @@ function contentSearchRg(
 	try {
 		const args = [
 			"--no-heading",
+			"--with-filename",
 			"--line-number",
 			"--color=never",
 			"--max-count", String(maxPerFile),
