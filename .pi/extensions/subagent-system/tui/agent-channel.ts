@@ -381,7 +381,7 @@ export class AgentChannelManager {
         overlay: true,
         overlayOptions: {
           anchor: "top-left",
-          percentWidth: 100,
+          width: "100%",
         },
       },
     );
@@ -966,8 +966,10 @@ class InvisibleInputCapture implements Focusable {
   }
 
   render(_width: number): string[] {
-    // Render a single empty line — effectively invisible
-    return [""];
+    // Render nothing — the overlay is purely an input capture mechanism.
+    // Returning [""] would composite an empty line at anchor position (top-left),
+    // overwriting real content and creating an invisible blank area.
+    return [];
   }
 
   invalidate(): void {}
