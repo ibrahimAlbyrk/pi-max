@@ -154,6 +154,9 @@ export interface AutocompleteItem {
 export interface SlashCommand {
 	name: string;
 	description?: string;
+	/** If true, this command can be invoked at any position in the input (e.g., skills, prompts).
+	 * Non-invocable commands (built-ins like /export) only work at the start of input. */
+	inlineInvocable?: boolean;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): AutocompleteItem[] | null;
@@ -223,13 +226,14 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		// Check for slash commands
-		if (textBeforeCursor.startsWith("/")) {
-			const spaceIndex = textBeforeCursor.indexOf(" ");
+		// Check for slash commands at start of line (all commands)
+		if (textBeforeCursor.trimStart().startsWith("/") && !textBeforeCursor.trimStart().startsWith("//")) {
+			const trimmedBefore = textBeforeCursor.trimStart();
+			const spaceIndex = trimmedBefore.indexOf(" ");
 
 			if (spaceIndex === -1) {
 				// No space yet - complete command names with fuzzy matching
-				const prefix = textBeforeCursor.slice(1); // Remove the "/"
+				const prefix = trimmedBefore.slice(1); // Remove the "/"
 				const commandItems = this.commands.map((cmd) => ({
 					name: "name" in cmd ? cmd.name : cmd.value,
 					label: "name" in cmd ? cmd.name : cmd.label,
@@ -246,12 +250,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 				return {
 					items: filtered,
-					prefix: textBeforeCursor,
+					prefix: textBeforeCursor.slice(textBeforeCursor.indexOf("/")),
 				};
 			} else {
 				// Space found - complete command arguments
-				const commandName = textBeforeCursor.slice(1, spaceIndex); // Command without "/"
-				const argumentText = textBeforeCursor.slice(spaceIndex + 1); // Text after space
+				const commandName = trimmedBefore.slice(1, spaceIndex); // Command without "/"
+				const argumentText = trimmedBefore.slice(spaceIndex + 1); // Text after space
 
 				const command = this.commands.find((cmd) => {
 					const name = "name" in cmd ? cmd.name : cmd.value;
@@ -271,6 +275,33 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 					prefix: argumentText,
 				};
 			}
+		}
+
+		// Check for inline slash invocations (skills/prompts) at any position
+		const inlineSlashPrefix = this.extractInlineSlashPrefix(textBeforeCursor);
+		if (inlineSlashPrefix !== null) {
+			const prefix = inlineSlashPrefix.slice(1); // Remove the "/"
+			// Only show inlineInvocable commands (skills, prompts)
+			const invocableItems = this.commands
+				.filter((cmd) => "inlineInvocable" in cmd && cmd.inlineInvocable)
+				.map((cmd) => ({
+					name: "name" in cmd ? cmd.name : cmd.value,
+					label: "name" in cmd ? cmd.name : cmd.label,
+					description: cmd.description,
+				}));
+
+			const filtered = fuzzyFilter(invocableItems, prefix, (item) => item.name).map((item) => ({
+				value: item.name,
+				label: item.label,
+				...(item.description && { description: item.description }),
+			}));
+
+			if (filtered.length === 0) return null;
+
+			return {
+				items: filtered,
+				prefix: inlineSlashPrefix,
+			};
 		}
 
 		// Check for file paths - triggered by Tab or if we detect a path pattern
@@ -317,11 +348,11 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const adjustedAfterCursor =
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
 
-		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path)
-		// Slash commands are at the start of the line and don't contain path separators after the first /
-		const isSlashCommand = prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
-		if (isSlashCommand) {
-			// This is a command name completion
+		// Check if we're completing a slash command or inline invocation
+		// Slash commands: prefix starts with "/" and not a file path
+		const isSlashCompletion = prefix.startsWith("/") && !prefix.slice(1).includes("/");
+		if (isSlashCompletion) {
+			// This is a command/invocation name completion
 			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
 			const newLines = [...lines];
 			newLines[cursorLine] = newLine;
@@ -389,6 +420,32 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	}
 
 	// Extract @ prefix for fuzzy file suggestions
+	/**
+	 * Extract an inline slash invocation prefix from mid-text.
+	 * Only triggers when "/" appears after whitespace (not at the very start of text).
+	 * Returns the "/token" being typed, or null if not in an inline slash context.
+	 */
+	private extractInlineSlashPrefix(text: string): string | null {
+		// Scan backwards to find the last "/" preceded by whitespace
+		for (let i = text.length - 1; i >= 0; i -= 1) {
+			const ch = text[i];
+			if (ch === " " || ch === "\t") {
+				// Hit whitespace before finding "/", no inline slash here
+				return null;
+			}
+			if (ch === "/") {
+				// "/" must be preceded by whitespace (or be at start, which is handled elsewhere)
+				if (i === 0) return null; // Start of line is handled by the main slash check
+				const prev = text[i - 1];
+				if (prev === " " || prev === "\t") {
+					return text.slice(i); // e.g., "/skill:fro" from "fix bug /skill:fro"
+				}
+				return null; // "/" not at word boundary (e.g., in a file path)
+			}
+		}
+		return null;
+	}
+
 	private extractAtPrefix(text: string): string | null {
 		const quotedPrefix = extractQuotedPrefix(text);
 		if (quotedPrefix?.startsWith('@"')) {

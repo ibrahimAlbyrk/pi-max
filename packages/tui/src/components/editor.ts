@@ -981,8 +981,8 @@ export class Editor implements Component, Focusable {
 
 		// Check if we should trigger or update autocomplete
 		if (!this.autocompleteState) {
-			// Auto-trigger for "/" at the start of a line (slash commands)
-			if (char === "/" && this.isAtStartOfMessage()) {
+			// Auto-trigger for "/" at the start of a line (slash commands) or after whitespace (inline invocations)
+			if (char === "/" && (this.isAtStartOfMessage() || this.isAtInlineSlashTrigger())) {
 				this.tryTriggerAutocomplete();
 			}
 			// Auto-trigger for "@" file reference (fuzzy search)
@@ -995,12 +995,16 @@ export class Editor implements Component, Focusable {
 					this.tryTriggerAutocomplete();
 				}
 			}
-			// Also auto-trigger when typing letters in a slash command context
-			else if (/[a-zA-Z0-9.\-_]/.test(char)) {
+			// Also auto-trigger when typing letters in a slash command or inline invocation context
+			else if (/[a-zA-Z0-9.\-_:]/.test(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 				// Check if we're in a slash command (with or without space for arguments)
 				if (this.isInSlashCommandContext(textBeforeCursor)) {
+					this.tryTriggerAutocomplete();
+				}
+				// Check if we're in an inline slash invocation context (e.g., "text /skill:na")
+				else if (this.isInInlineSlashContext(textBeforeCursor)) {
 					this.tryTriggerAutocomplete();
 				}
 				// Check if we're in an @ file reference context
@@ -1904,6 +1908,33 @@ export class Editor implements Component, Focusable {
 		return this.isSlashMenuAllowed() && textBeforeCursor.trimStart().startsWith("/");
 	}
 
+	// Check if "/" was just typed after whitespace (inline invocation trigger)
+	private isAtInlineSlashTrigger(): boolean {
+		const currentLine = this.state.lines[this.state.cursorLine] || "";
+		const beforeCursor = currentLine.slice(0, this.state.cursorCol);
+		// Must have at least 2 chars: something + "/"
+		if (beforeCursor.length < 2) return false;
+		// Last char is "/", char before it is whitespace
+		const lastChar = beforeCursor[beforeCursor.length - 1];
+		const prevChar = beforeCursor[beforeCursor.length - 2];
+		return lastChar === "/" && (prevChar === " " || prevChar === "\t");
+	}
+
+	// Check if cursor is in an inline slash invocation context (e.g., "some text /skill:na")
+	private isInInlineSlashContext(textBeforeCursor: string): boolean {
+		// Scan backwards from cursor to find "/" preceded by whitespace, with no spaces between "/" and cursor
+		for (let i = textBeforeCursor.length - 1; i >= 0; i -= 1) {
+			const ch = textBeforeCursor[i];
+			if (ch === " " || ch === "\t") return false; // Hit whitespace before finding "/"
+			if (ch === "/") {
+				if (i === 0) return false; // Start of line handled by isInSlashCommandContext
+				const prev = textBeforeCursor[i - 1];
+				return prev === " " || prev === "\t";
+			}
+		}
+		return false;
+	}
+
 	// Autocomplete methods
 	private tryTriggerAutocomplete(explicitTab: boolean = false): void {
 		if (!this.autocompleteProvider) return;
@@ -1940,8 +1971,12 @@ export class Editor implements Component, Focusable {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		const beforeCursor = currentLine.slice(0, this.state.cursorCol);
 
-		// Check if we're in a slash command context
+		// Check if we're in a slash command context (start of line)
 		if (this.isInSlashCommandContext(beforeCursor) && !beforeCursor.trimStart().includes(" ")) {
+			this.handleSlashCommandCompletion();
+		}
+		// Check if we're in an inline slash invocation context
+		else if (this.isInInlineSlashContext(beforeCursor)) {
 			this.handleSlashCommandCompletion();
 		} else {
 			this.forceFileAutocomplete(true);

@@ -39,6 +39,7 @@ import { appKey, appKeyHint, editorKey, keyHint, rawKeyHint } from "./components
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
 import { OAuthSelectorComponent } from "./components/oauth-selector.js";
+import { QuestionDialogComponent, } from "./components/question-dialog.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
@@ -64,6 +65,7 @@ export class InteractiveMode {
     autocompleteProvider;
     fdPath;
     editorContainer;
+    footerContainer;
     footer;
     footerDataProvider;
     keybindings;
@@ -112,10 +114,13 @@ export class InteractiveMode {
     extensionSelector = undefined;
     extensionInput = undefined;
     extensionEditor = undefined;
+    questionDialog = undefined;
     extensionTerminalInputUnsubscribers = new Set();
     // Extension widgets (components rendered above/below the editor)
     extensionWidgetsAbove = new Map();
     extensionWidgetsBelow = new Map();
+    // Extensions that need dependency installation (checked after UI starts)
+    pendingExtensionInstalls = [];
     widgetContainerAbove;
     widgetContainerBelow;
     // Custom footer from extension (undefined = use built-in footer)
@@ -161,6 +166,8 @@ export class InteractiveMode {
         this.footerDataProvider = new FooterDataProvider();
         this.footer = new FooterComponent(session, this.footerDataProvider);
         this.footer.setAutoCompactEnabled(session.autoCompactionEnabled);
+        this.footerContainer = new Container();
+        this.footerContainer.addChild(this.footer);
         // Load hide thinking block setting
         this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
         // Register themes from resource loader and initialize
@@ -204,6 +211,7 @@ export class InteractiveMode {
         const templateCommands = this.session.promptTemplates.map((cmd) => ({
             name: cmd.name.replace(/\//g, ":"),
             description: cmd.description,
+            inlineInvocable: true,
         }));
         // Convert extension commands to SlashCommand format
         const builtinCommandNames = new Set(slashCommands.map((c) => c.name));
@@ -219,7 +227,7 @@ export class InteractiveMode {
             for (const skill of this.session.resourceLoader.getSkills().skills) {
                 const commandName = `skill:${skill.name}`;
                 this.skillCommands.set(commandName, skill.filePath);
-                skillCommandList.push({ name: commandName, description: skill.description });
+                skillCommandList.push({ name: commandName, description: skill.description, inlineInvocable: true });
             }
         }
         // Setup autocomplete
@@ -238,8 +246,21 @@ export class InteractiveMode {
         // Both are needed: fd for autocomplete, rg for grep tool and bash commands
         const [fdPath] = await Promise.all([ensureTool("fd"), ensureTool("rg")]);
         this.fdPath = fdPath;
-        // Add header container as first child
-        this.ui.addChild(this.headerContainer);
+        // Set up region-based layout (alternate screen mode)
+        // Chat region (scrollable): header + messages + status
+        // Input region (fixed bottom): widgets + editor + footer
+        this.ui.addRegion({
+            id: "chat",
+            components: [this.headerContainer, this.chatContainer, this.pendingMessagesContainer, this.statusContainer],
+            sizing: "flex",
+            scrollable: true,
+            minHeight: 3,
+        });
+        this.ui.addRegion({
+            id: "input",
+            components: [this.widgetContainerAbove, this.editorContainer, this.widgetContainerBelow, this.footerContainer],
+            sizing: "fixed",
+        });
         // Add header with keybindings from config (unless silenced)
         if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
             const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
@@ -303,14 +324,7 @@ export class InteractiveMode {
                 this.headerContainer.addChild(new Text(condensedText, 1, 0));
             }
         }
-        this.ui.addChild(this.chatContainer);
-        this.ui.addChild(this.pendingMessagesContainer);
-        this.ui.addChild(this.statusContainer);
         this.renderWidgets(); // Initialize with default spacer
-        this.ui.addChild(this.widgetContainerAbove);
-        this.ui.addChild(this.editorContainer);
-        this.ui.addChild(this.widgetContainerBelow);
-        this.ui.addChild(this.footer);
         this.ui.setFocus(this.editor);
         this.setupKeyHandlers();
         this.setupEditorSubmitHandler();
@@ -357,6 +371,8 @@ export class InteractiveMode {
      */
     async run() {
         await this.init();
+        // Prompt to install missing extension dependencies (needs UI event loop)
+        await this.promptExtensionInstalls();
         // Start version check asynchronously
         this.checkForNewVersion().then((newVersion) => {
             if (newVersion) {
@@ -733,11 +749,19 @@ export class InteractiveMode {
             }
             const extensionDiagnostics = [];
             const extensionErrors = this.session.resourceLoader.getExtensions().errors;
+            const installableErrors = [];
             if (extensionErrors.length > 0) {
                 for (const error of extensionErrors) {
-                    extensionDiagnostics.push({ type: "error", message: error.error, path: error.path });
+                    if (error.needsInstall && error.packageDir) {
+                        installableErrors.push({ path: error.path, packageDir: error.packageDir });
+                    }
+                    else {
+                        extensionDiagnostics.push({ type: "error", message: error.error, path: error.path });
+                    }
                 }
             }
+            // Store installable errors for prompting after UI starts
+            this.pendingExtensionInstalls = installableErrors;
             const commandDiagnostics = this.session.extensionRunner?.getCommandDiagnostics() ?? [];
             extensionDiagnostics.push(...commandDiagnostics);
             const shortcutDiagnostics = this.session.extensionRunner?.getShortcutDiagnostics() ?? [];
@@ -745,6 +769,13 @@ export class InteractiveMode {
             if (extensionDiagnostics.length > 0) {
                 const warningLines = this.formatDiagnostics(extensionDiagnostics, metadata);
                 this.chatContainer.addChild(new Text(`${theme.fg("warning", "[Extension issues]")}\n${warningLines}`, 0, 0));
+                this.chatContainer.addChild(new Spacer(1));
+            }
+            if (installableErrors.length > 0) {
+                const extNames = installableErrors
+                    .map((e) => theme.fg("accent", `  ${this.formatDisplayPath(e.path)}`))
+                    .join("\n");
+                this.chatContainer.addChild(new Text(`${theme.fg("warning", "[Missing extension dependencies]")}\n${extNames}\n  ${theme.fg("muted", "Run /reload after installing, or restart to be prompted.")}`, 0, 0));
                 this.chatContainer.addChild(new Spacer(1));
             }
             const themeDiagnostics = themesResult.diagnostics;
@@ -845,12 +876,69 @@ export class InteractiveMode {
         this.showLoadedResources({ extensionPaths: extensionRunner.getExtensionPaths(), force: false });
     }
     /**
+     * Prompt user to install missing extension dependencies.
+     * Called after UI event loop starts so selectors work.
+     */
+    async promptExtensionInstalls() {
+        if (this.pendingExtensionInstalls.length === 0)
+            return;
+        const installs = this.pendingExtensionInstalls;
+        this.pendingExtensionInstalls = [];
+        const extNames = installs.map((e) => path.basename(path.dirname(e.path))).join(", ");
+        const selected = await this.showExtensionSelector(`Extensions with missing dependencies: ${extNames}\nWould you like to install them?`, ["Yes", "No"]);
+        if (selected !== "Yes")
+            return;
+        const loader = new BorderedLoader(this.ui, theme, "Installing extension dependencies...", {
+            cancellable: false,
+        });
+        this.editorContainer.clear();
+        this.editorContainer.addChild(loader);
+        this.ui.setFocus(loader);
+        this.ui.requestRender();
+        let anyFailed = false;
+        for (const install of installs) {
+            try {
+                const result = spawnSync("npm", ["install"], {
+                    cwd: install.packageDir,
+                    stdio: "pipe",
+                    timeout: 60_000,
+                });
+                if (result.status !== 0) {
+                    const stderr = result.stderr?.toString() ?? "unknown error";
+                    this.showError(`Failed to install dependencies for ${this.formatDisplayPath(install.path)}: ${stderr}`);
+                    anyFailed = true;
+                }
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.showError(`Failed to install dependencies for ${this.formatDisplayPath(install.path)}: ${msg}`);
+                anyFailed = true;
+            }
+        }
+        loader.dispose();
+        this.editorContainer.clear();
+        this.editorContainer.addChild(this.editor);
+        this.ui.setFocus(this.editor);
+        this.ui.requestRender();
+        if (!anyFailed) {
+            await this.handleReloadCommand();
+        }
+        else {
+            this.showWarning("Some dependencies failed to install. Fix the issues and run /reload.");
+        }
+    }
+    /**
      * Get a registered tool definition by name (for custom rendering).
      */
     getRegisteredToolDefinition(toolName) {
+        // Check extension-registered tools first
         const tools = this.session.extensionRunner?.getAllRegisteredTools() ?? [];
         const registeredTool = tools.find((t) => t.definition.name === toolName);
-        return registeredTool?.definition;
+        if (registeredTool)
+            return registeredTool.definition;
+        // Check SDK-level custom tools (e.g., ask_user_question)
+        const customTool = this.session.customToolDefinitions.find((t) => t.name === toolName);
+        return customTool;
     }
     /**
      * Set up keyboard shortcuts registered by extensions.
@@ -1019,22 +1107,17 @@ export class InteractiveMode {
         if (this.customFooter?.dispose) {
             this.customFooter.dispose();
         }
-        // Remove current footer from UI
-        if (this.customFooter) {
-            this.ui.removeChild(this.customFooter);
-        }
-        else {
-            this.ui.removeChild(this.footer);
-        }
+        // Swap footer inside the footerContainer (works with both linear and region mode)
+        this.footerContainer.clear();
         if (factory) {
             // Create and add custom footer, passing the data provider
             this.customFooter = factory(this.ui, theme, this.footerDataProvider);
-            this.ui.addChild(this.customFooter);
+            this.footerContainer.addChild(this.customFooter);
         }
         else {
             // Restore built-in footer
             this.customFooter = undefined;
-            this.ui.addChild(this.footer);
+            this.footerContainer.addChild(this.footer);
         }
         this.ui.requestRender();
     }
@@ -1095,6 +1178,7 @@ export class InteractiveMode {
             select: (title, options, opts) => this.showExtensionSelector(title, options, opts),
             confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
             input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
+            question: (config) => this.showExtensionQuestion(config),
             notify: (message, type) => this.showExtensionNotify(message, type),
             onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
             setStatus: (key, text) => this.setExtensionStatus(key, text),
@@ -1234,6 +1318,42 @@ export class InteractiveMode {
         this.editorContainer.clear();
         this.editorContainer.addChild(this.editor);
         this.extensionInput = undefined;
+        this.ui.setFocus(this.editor);
+        this.ui.requestRender();
+    }
+    /**
+     * Show a structured question dialog for extensions.
+     */
+    showExtensionQuestion(config) {
+        return new Promise((resolve) => {
+            if (config.signal?.aborted) {
+                resolve({ answers: [], completed: false });
+                return;
+            }
+            const onAbort = () => {
+                this.hideExtensionQuestion();
+                resolve({ answers: [], completed: false });
+            };
+            config.signal?.addEventListener("abort", onAbort, { once: true });
+            this.questionDialog = new QuestionDialogComponent(config, theme, this.ui, (result) => {
+                config.signal?.removeEventListener("abort", onAbort);
+                this.hideExtensionQuestion();
+                resolve(result);
+            });
+            this.editorContainer.clear();
+            this.editorContainer.addChild(this.questionDialog);
+            this.ui.setFocus(this.questionDialog);
+            this.ui.requestRender();
+        });
+    }
+    /**
+     * Hide the question dialog.
+     */
+    hideExtensionQuestion() {
+        this.questionDialog?.dispose();
+        this.editorContainer.clear();
+        this.editorContainer.addChild(this.editor);
+        this.questionDialog = undefined;
         this.ui.setFocus(this.editor);
         this.ui.requestRender();
     }
@@ -1480,6 +1600,31 @@ export class InteractiveMode {
         this.defaultEditor.onAction("tree", () => this.showTreeSelector());
         this.defaultEditor.onAction("fork", () => this.showUserMessageSelector());
         this.defaultEditor.onAction("resume", () => this.showSessionSelector());
+        // Scroll keybindings for the chat region
+        this.defaultEditor.onAction("scrollUp", () => {
+            this.ui.getScrollController("chat")?.scrollUp(3);
+            this.ui.requestRender();
+        });
+        this.defaultEditor.onAction("scrollDown", () => {
+            this.ui.getScrollController("chat")?.scrollDown(3);
+            this.ui.requestRender();
+        });
+        this.defaultEditor.onAction("scrollPageUp", () => {
+            this.ui.getScrollController("chat")?.pageUp();
+            this.ui.requestRender();
+        });
+        this.defaultEditor.onAction("scrollPageDown", () => {
+            this.ui.getScrollController("chat")?.pageDown();
+            this.ui.requestRender();
+        });
+        this.defaultEditor.onAction("scrollToTop", () => {
+            this.ui.getScrollController("chat")?.scrollToTop();
+            this.ui.requestRender();
+        });
+        this.defaultEditor.onAction("scrollToBottom", () => {
+            this.ui.getScrollController("chat")?.scrollToBottom();
+            this.ui.requestRender();
+        });
         this.defaultEditor.onChange = (text) => {
             const wasBashMode = this.isBashMode;
             this.isBashMode = text.trimStart().startsWith("!");
@@ -1735,7 +1880,6 @@ export class InteractiveMode {
                     for (const content of this.streamingMessage.content) {
                         if (content.type === "toolCall") {
                             if (!this.pendingTools.has(content.id)) {
-                                this.chatContainer.addChild(new Text("", 0, 0));
                                 const component = new ToolExecutionComponent(content.name, content.arguments, {
                                     showImages: this.settingsManager.getShowImages(),
                                 }, this.getRegisteredToolDefinition(content.name), this.ui);

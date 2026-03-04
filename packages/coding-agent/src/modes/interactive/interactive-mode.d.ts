@@ -33,6 +33,7 @@ export declare class InteractiveMode {
 	private autocompleteProvider;
 	private fdPath;
 	private editorContainer;
+	private footerContainer;
 	private footer;
 	private footerDataProvider;
 	private keybindings;
@@ -66,9 +67,11 @@ export declare class InteractiveMode {
 	private extensionSelector;
 	private extensionInput;
 	private extensionEditor;
+	private questionDialog;
 	private extensionTerminalInputUnsubscribers;
 	private extensionWidgetsAbove;
 	private extensionWidgetsBelow;
+	private pendingExtensionInstalls;
 	private widgetContainerAbove;
 	private widgetContainerBelow;
 	private customFooter;
@@ -122,6 +125,7 @@ export declare class InteractiveMode {
 	private formatDiagnostics;
 	private showLoadedResources;
 	private initExtensions;
+	private promptExtensionInstalls;
 	/**
 	 * Get a registered tool definition by name (for custom rendering).
 	 */
@@ -177,6 +181,14 @@ export declare class InteractiveMode {
 	 * Hide the extension input.
 	 */
 	private hideExtensionInput;
+	/**
+	 * Show a structured question dialog for extensions.
+	 */
+	private showExtensionQuestion;
+	/**
+	 * Hide the question dialog.
+	 */
+	private hideExtensionQuestion;
 	/**
 	 * Show a multi-line editor for extensions (with Ctrl+G support).
 	 */

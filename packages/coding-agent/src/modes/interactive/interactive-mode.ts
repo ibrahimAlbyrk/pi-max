@@ -344,6 +344,7 @@ export class InteractiveMode {
 		const templateCommands: SlashCommand[] = this.session.promptTemplates.map((cmd) => ({
 			name: cmd.name.replace(/\//g, ":"),
 			description: cmd.description,
+			inlineInvocable: true,
 		}));
 
 		// Convert extension commands to SlashCommand format
@@ -363,7 +364,7 @@ export class InteractiveMode {
 			for (const skill of this.session.resourceLoader.getSkills().skills) {
 				const commandName = `skill:${skill.name}`;
 				this.skillCommands.set(commandName, skill.filePath);
-				skillCommandList.push({ name: commandName, description: skill.description });
+				skillCommandList.push({ name: commandName, description: skill.description, inlineInvocable: true });
 			}
 		}
 
