@@ -99,7 +99,7 @@ export function setupTUI(pi: ExtensionAPI, manager: AgentManager): void {
           render: (width: number) => {
             // Read live state on every render — no captured snapshots
             const agents = manager.getAllAgents();
-            if (agents.length === 0 || !panelVisible) {
+            if (agents.length === 0 || !panelVisible || channelManager.isOpen()) {
               return [];
             }
 
