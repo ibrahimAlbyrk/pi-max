@@ -383,9 +383,9 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 ```typescript
 import {
   codingTools,   // read, bash, edit, write (default)
-  readOnlyTools, // read, grep, find, ls
+  readOnlyTools, // read, search
   readTool, bashTool, editTool, writeTool,
-  grepTool, findTool, lsTool,
+  searchTool,
 } from "@mariozechner/pi-coding-agent";
 
 // Use built-in tool set
@@ -395,7 +395,7 @@ const { session } = await createAgentSession({
 
 // Pick specific tools
 const { session } = await createAgentSession({
-  tools: [readTool, bashTool, grepTool],
+  tools: [readTool, bashTool, searchTool],
 });
 ```
 
@@ -406,14 +406,12 @@ const { session } = await createAgentSession({
 ```typescript
 import {
   createCodingTools,    // Creates [read, bash, edit, write] for specific cwd
-  createReadOnlyTools,  // Creates [read, grep, find, ls] for specific cwd
+  createReadOnlyTools,  // Creates [read, search] for specific cwd
   createReadTool,
   createBashTool,
   createEditTool,
   createWriteTool,
-  createGrepTool,
-  createFindTool,
-  createLsTool,
+  createSearchTool,
 } from "@mariozechner/pi-coding-agent";
 
 const cwd = "/path/to/project";
@@ -427,7 +425,7 @@ const { session } = await createAgentSession({
 // Or pick specific tools
 const { session } = await createAgentSession({
   cwd,
-  tools: [createReadTool(cwd), createBashTool(cwd), createGrepTool(cwd)],
+  tools: [createReadTool(cwd), createBashTool(cwd), createSearchTool(cwd)],
 });
 ```
 
@@ -945,14 +943,12 @@ SettingsManager
 // Built-in tools (use process.cwd())
 codingTools
 readOnlyTools
-readTool, bashTool, editTool, writeTool
-grepTool, findTool, lsTool
+readTool, bashTool, editTool, writeTool, searchTool
 
 // Tool factories (for custom cwd)
 createCodingTools
 createReadOnlyTools
-createReadTool, createBashTool, createEditTool, createWriteTool
-createGrepTool, createFindTool, createLsTool
+createReadTool, createBashTool, createEditTool, createWriteTool, createSearchTool
 
 // Types
 type CreateAgentSessionOptions

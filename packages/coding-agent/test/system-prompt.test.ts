@@ -49,7 +49,7 @@ describe("buildSystemPrompt", () => {
 			const prompt = buildSystemPrompt({
 				activeTools: [
 					{ name: "read", description: "Read file contents" },
-					{ name: "tree_search", description: "Browse and search project files" },
+					{ name: "search", description: "Browse and search project files" },
 					{ name: "lsp_diagnostics", description: "Get compiler errors and warnings" },
 				],
 				contextFiles: [],
@@ -57,7 +57,7 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain("- read:");
-			expect(prompt).toContain("- tree_search:");
+			expect(prompt).toContain("- search:");
 			expect(prompt).toContain("- lsp_diagnostics:");
 		});
 	});

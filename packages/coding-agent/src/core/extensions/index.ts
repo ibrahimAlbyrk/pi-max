@@ -66,22 +66,16 @@ export type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
-	FindToolCallEvent,
-	FindToolResultEvent,
 	GetActiveToolsHandler,
 	GetAllToolsHandler,
 	GetCommandsHandler,
 	GetThinkingLevelHandler,
-	GrepToolCallEvent,
-	GrepToolResultEvent,
 	// Events - Input
 	InputEvent,
 	InputEventResult,
 	InputSource,
 	KeybindingsManager,
 	LoadExtensionsResult,
-	LsToolCallEvent,
-	LsToolResultEvent,
 	// Events - Message
 	MessageEndEvent,
 	// Message Rendering
@@ -108,6 +102,8 @@ export type {
 	// Events - Resources
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	SearchToolCallEvent,
+	SearchToolResultEvent,
 	SendMessageHandler,
 	SendUserMessageHandler,
 	SessionBeforeCompactEvent,
@@ -159,10 +155,8 @@ export type {
 export {
 	isBashToolResult,
 	isEditToolResult,
-	isFindToolResult,
-	isGrepToolResult,
-	isLsToolResult,
 	isReadToolResult,
+	isSearchToolResult,
 	isToolCallEventType,
 	isWriteToolResult,
 } from "./types.js";

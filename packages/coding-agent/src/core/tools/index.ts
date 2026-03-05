@@ -18,30 +18,6 @@ export {
 	editTool,
 } from "./edit.js";
 export {
-	createFindTool,
-	type FindOperations,
-	type FindToolDetails,
-	type FindToolInput,
-	type FindToolOptions,
-	findTool,
-} from "./find.js";
-export {
-	createGrepTool,
-	type GrepOperations,
-	type GrepToolDetails,
-	type GrepToolInput,
-	type GrepToolOptions,
-	grepTool,
-} from "./grep.js";
-export {
-	createLsTool,
-	type LsOperations,
-	type LsToolDetails,
-	type LsToolInput,
-	type LsToolOptions,
-	lsTool,
-} from "./ls.js";
-export {
 	createReadTool,
 	type ReadOperations,
 	type ReadToolDetails,
@@ -49,6 +25,13 @@ export {
 	type ReadToolOptions,
 	readTool,
 } from "./read.js";
+export {
+	createSearchTool,
+	type SearchToolDetails,
+	type SearchToolInput,
+	type SearchToolOptions,
+	searchTool,
+} from "./search.js";
 export {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -82,10 +65,8 @@ export {
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type BashToolOptions, bashTool, createBashTool } from "./bash.js";
 import { createEditTool, editTool } from "./edit.js";
-import { createFindTool, findTool } from "./find.js";
-import { createGrepTool, grepTool } from "./grep.js";
-import { createLsTool, lsTool } from "./ls.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
+import { createSearchTool, searchTool } from "./search.js";
 import { createWebfetchTool } from "./webfetch.js";
 import { createWebsearchTool } from "./websearch.js";
 import { createWriteTool, writeTool } from "./write.js";
@@ -105,9 +86,7 @@ const _toolRegistry = {
 	bash: (cwd: string) => createBashTool(cwd),
 	edit: (cwd: string) => createEditTool(cwd),
 	write: (cwd: string) => createWriteTool(cwd),
-	grep: (cwd: string) => createGrepTool(cwd),
-	find: (cwd: string) => createFindTool(cwd),
-	ls: (cwd: string) => createLsTool(cwd),
+	search: (cwd: string) => createSearchTool(cwd),
 	webfetch: (_cwd: string) => createWebfetchTool(),
 	websearch: (_cwd: string) => createWebsearchTool(),
 };
@@ -120,7 +99,7 @@ export const toolRegistry: Record<ToolName, (cwd: string) => Tool> = _toolRegist
 export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool];
 
 // Read-only tools for exploration without modification (using process.cwd())
-export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool];
+export const readOnlyTools: Tool[] = [readTool, searchTool];
 
 // All available tools (using process.cwd()) — derived from toolRegistry
 export const allTools = Object.fromEntries(
@@ -162,7 +141,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
  * Create read-only tools configured for a specific working directory.
  */
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
-	return [createReadTool(cwd, options?.read), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)];
+	return [createReadTool(cwd, options?.read), createSearchTool(cwd)];
 }
 
 /**
@@ -174,9 +153,7 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		bash: createBashTool(cwd, options?.bash),
 		edit: createEditTool(cwd),
 		write: createWriteTool(cwd),
-		grep: createGrepTool(cwd),
-		find: createFindTool(cwd),
-		ls: createLsTool(cwd),
+		search: createSearchTool(cwd),
 		webfetch: createWebfetchTool(),
 		websearch: createWebsearchTool(),
 	};

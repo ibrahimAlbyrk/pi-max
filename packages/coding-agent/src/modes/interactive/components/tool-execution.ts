@@ -888,6 +888,123 @@ export class ToolExecutionComponent extends Container {
 					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 				}
 			}
+		} else if (this.toolName === "search") {
+			// Header — mimic old tree_search extension style
+			text = `${theme.fg("toolTitle", theme.bold("search"))} `;
+
+			if (this.args?.content) {
+				text += theme.fg("warning", "content ");
+				text += theme.fg("accent", `"${this.args.content}"`);
+				if (this.args.path) text += theme.fg("dim", ` in ${this.args.path}`);
+			} else if (this.args?.query) {
+				const q = String(this.args.query);
+				const isRegex = q.startsWith("/") && q.endsWith("/");
+				text += theme.fg("warning", isRegex ? "regex " : "search ");
+				text += theme.fg("accent", `"${q}"`);
+			} else {
+				text += theme.fg("muted", "browse ");
+				if (this.args?.path) text += theme.fg("accent", this.args.path);
+				else text += theme.fg("dim", ".");
+				if (this.args?.depth) text += theme.fg("dim", ` depth=${this.args.depth}`);
+			}
+
+			if (this.args?.type) text += theme.fg("dim", ` type=${this.args.type}`);
+			if (this.args?.offset) text += theme.fg("dim", ` offset=${this.args.offset}`);
+			if (this.args?.limit) text += theme.fg("dim", ` limit=${this.args.limit}`);
+
+			// Result rendering
+			if (this.result) {
+				const details = this.result.details as Record<string, unknown> | undefined;
+				const output = this.getTextOutput();
+
+				if (details?.error) {
+					text += `\n\n${theme.fg("error", output)}`;
+				} else if (output) {
+					const lines = output.split("\n");
+					const rendered: string[] = [];
+
+					for (const line of lines) {
+						if (!line) {
+							rendered.push("");
+							continue;
+						}
+
+						// Pagination / summary info
+						if (line.startsWith("Showing ") || line.startsWith("No ") || /^\d+ (entries|matches)/.test(line)) {
+							rendered.push(theme.fg("dim", line));
+							continue;
+						}
+
+						// Content search mode
+						if (details?.mode === "content") {
+							const lineMatch = line.match(/^ {2}(\d+): (.*)$/);
+							if (lineMatch) {
+								rendered.push(`  ${theme.fg("dim", `${lineMatch[1]}: `)}${theme.fg("text", lineMatch[2])}`);
+								continue;
+							}
+							// File path header
+							if (!line.startsWith(" ")) {
+								const lastSlash = line.lastIndexOf("/");
+								if (lastSlash >= 0) {
+									rendered.push(
+										theme.fg("dim", line.slice(0, lastSlash + 1)) +
+											theme.fg("accent", line.slice(lastSlash + 1)),
+									);
+								} else {
+									rendered.push(theme.fg("accent", line));
+								}
+								continue;
+							}
+						}
+
+						// Directory line (ends with / or has file/dir count)
+						if (/\/\s*(\(|$)/.test(line)) {
+							const match = line.match(/^(\s*)(.*?\/)\s*(\(.*\))?$/);
+							if (match) {
+								const indent = match[1] || "";
+								const dirName = match[2];
+								const meta = match[3] || "";
+								rendered.push(indent + theme.fg("accent", dirName) + (meta ? ` ${theme.fg("dim", meta)}` : ""));
+								continue;
+							}
+						}
+
+						// Search result with score
+						if (details?.mode === "search") {
+							const scoreMatch = line.match(/^(.*?)\s+\(score: [\d.]+\)$/);
+							if (scoreMatch) {
+								const lastSlash = scoreMatch[1].lastIndexOf("/");
+								if (lastSlash >= 0) {
+									rendered.push(
+										theme.fg("dim", scoreMatch[1].slice(0, lastSlash + 1)) +
+											theme.fg("text", scoreMatch[1].slice(lastSlash + 1)),
+									);
+								} else {
+									rendered.push(theme.fg("text", scoreMatch[1]));
+								}
+								continue;
+							}
+						}
+
+						// File line
+						const fileMatch = line.match(/^(\s*)(.*)/);
+						if (fileMatch) {
+							rendered.push((fileMatch[1] || "") + theme.fg("text", fileMatch[2]));
+						} else {
+							rendered.push(line);
+						}
+					}
+
+					const maxLines = this.expanded ? rendered.length : 20;
+					const displayLines = rendered.slice(0, maxLines);
+					const remaining = rendered.length - maxLines;
+
+					text += `\n\n${displayLines.join("\n")}`;
+					if (remaining > 0) {
+						text += `\n${theme.fg("dim", `... ${remaining} more lines`)}`;
+					}
+				}
+			}
 		} else if (this.toolName === "webfetch") {
 			const rawUrl = str(this.args?.url);
 			let urlDisplay: string;

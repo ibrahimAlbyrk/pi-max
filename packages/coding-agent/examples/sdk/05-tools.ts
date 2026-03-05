@@ -16,12 +16,12 @@ import {
 	createAgentSession,
 	createBashTool,
 	createCodingTools,
-	createGrepTool,
 	createReadTool,
-	grepTool,
+	createSearchTool,
 	readOnlyTools,
 	readTool,
 	SessionManager,
+	searchTool,
 } from "@mariozechner/pi-coding-agent";
 
 // Read-only mode (no edit/write) - uses process.cwd()
@@ -33,7 +33,7 @@ console.log("Read-only session created");
 
 // Custom tool selection - uses process.cwd()
 await createAgentSession({
-	tools: [readTool, bashTool, grepTool],
+	tools: [readTool, bashTool, searchTool],
 	sessionManager: SessionManager.inMemory(),
 });
 console.log("Custom tools session created");
@@ -50,7 +50,7 @@ console.log("Custom cwd session created");
 // Or pick specific tools for custom cwd
 await createAgentSession({
 	cwd: customCwd,
-	tools: [createReadTool(customCwd), createBashTool(customCwd), createGrepTool(customCwd)],
+	tools: [createReadTool(customCwd), createBashTool(customCwd), createSearchTool(customCwd)],
 	sessionManager: SessionManager.inMemory(),
 });
 console.log("Specific tools with custom cwd session created");

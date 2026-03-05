@@ -2,8 +2,17 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed built-in tools `find`, `grep`, and `ls`. Use the new `search` tool instead, which combines directory browsing, fuzzy/regex file search, and content search in a single tool
+- Moved `tree_search` extension to a built-in tool and renamed it to `search`. The `.pi/extensions/tree-search/` extension is no longer needed
+- Removed SDK exports: `findTool`, `grepTool`, `lsTool`, `createFindTool`, `createGrepTool`, `createLsTool` and their associated types (`FindToolInput`, `GrepToolInput`, `LsToolInput`, etc.)
+- Removed extension event types: `FindToolCallEvent`, `GrepToolCallEvent`, `LsToolCallEvent`, `FindToolResultEvent`, `GrepToolResultEvent`, `LsToolResultEvent`
+- `readOnlyTools` now contains `[readTool, searchTool]` instead of `[readTool, grepTool, findTool, lsTool]`
+
 ### Added
 
+- Added `search` built-in tool with content mode parameters: `glob` (file type filter), `literal` (non-regex search), `ignoreCase`, and `context` (surrounding lines)
 - Added `excludeFromContext` field to `CustomMessage` and `CustomMessageEntry`, allowing extension-injected messages to be displayed in TUI but excluded from LLM context (similar to `!!` bash prefix behavior)
 
 ### Fixed
