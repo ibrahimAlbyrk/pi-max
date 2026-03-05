@@ -1965,12 +1965,18 @@ export class InteractiveMode {
 
 		// Save chat container children for fullscreen restore
 		const savedChatChildren = isFullscreen ? [...this.chatContainer.children] : [];
+		// Original addChild — saved so we can intercept during fullscreen and restore later.
+		// The intercept is installed AFTER the fullscreen component is mounted (in the .then()
+		// branch below) so the chatProxy itself goes to the real container.
+		const originalAddChild = isFullscreen ? this.chatContainer.addChild.bind(this.chatContainer) : null;
 
 		const restoreEditor = () => {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
 			this.editor.setText(savedText);
 			if (isFullscreen) {
+				// Restore original addChild before re-adding children
+				if (originalAddChild) this.chatContainer.addChild = originalAddChild;
 				this.chatContainer.clear();
 				for (const child of savedChatChildren) {
 					this.chatContainer.addChild(child);
@@ -2053,6 +2059,14 @@ export class InteractiveMode {
 						this.chatContainer.addChild(chatProxy);
 						this.editorContainer.clear();
 						this.editorContainer.addChild(inputProxy);
+
+						// Intercept addChild NOW — after chatProxy is mounted.
+						// Any new children added during fullscreen (e.g. main agent messages)
+						// go to savedChatChildren and appear when fullscreen closes.
+						this.chatContainer.addChild = (child: Component) => {
+							savedChatChildren.push(child);
+						};
+
 						this.ui.setFocus(component);
 						this.ui.requestRender();
 					} else {
