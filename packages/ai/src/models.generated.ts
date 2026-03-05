@@ -7210,7 +7210,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
-			maxTokens: 16384,
+			maxTokens: 32000,
 		} satisfies Model<"openai-completions">,
 		"inception/mercury-coder": {
 			id: "inception/mercury-coder",
@@ -7227,7 +7227,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
-			maxTokens: 16384,
+			maxTokens: 32000,
 		} satisfies Model<"openai-completions">,
 		"kwaipilot/kat-coder-pro": {
 			id: "kwaipilot/kat-coder-pro",
