@@ -616,9 +616,9 @@ export class TUI extends Container {
 					const ctrl = this.scrollControllers.get(region.id);
 					if (ctrl) {
 						if (button === 64) {
-							ctrl.scrollUp(3);
+							ctrl.scrollUp(1);
 						} else {
-							ctrl.scrollDown(3);
+							ctrl.scrollDown(1);
 						}
 						this.requestRender();
 						break;
