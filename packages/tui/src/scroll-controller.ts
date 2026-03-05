@@ -36,10 +36,11 @@ export class ScrollController {
 
 	/** Get current scroll info for indicators */
 	getScrollInfo(): ScrollInfo {
+		const intOffset = Math.floor(this.offset);
 		return {
-			linesAbove: this.offset,
-			linesBelow: Math.max(0, this.contentHeight - this.offset - this.viewportHeight),
-			offset: this.offset,
+			linesAbove: intOffset,
+			linesBelow: Math.max(0, this.contentHeight - intOffset - this.viewportHeight),
+			offset: intOffset,
 			contentHeight: this.contentHeight,
 			viewportHeight: this.viewportHeight,
 		};
@@ -70,7 +71,8 @@ export class ScrollController {
 		// Clamp offset to valid range
 		this.clampOffset();
 
-		const slice = allLines.slice(this.offset, this.offset + viewportHeight);
+		const intOffset = Math.floor(this.offset);
+		const slice = allLines.slice(intOffset, intOffset + viewportHeight);
 
 		// Bottom-align: when content is shorter than viewport, pad top with empty lines
 		// so content sits at the bottom (adjacent to the input region below)
@@ -89,14 +91,15 @@ export class ScrollController {
 		this._autoFollow = false;
 	}
 
-	/** Scroll down by N lines */
+	/** Scroll down by N lines (supports fractional values for smooth scrolling) */
 	scrollDown(lines = 1): void {
 		const maxOffset = Math.max(0, this.contentHeight - this.viewportHeight);
 		if (this.offset >= maxOffset) return;
 		this.offset = Math.min(maxOffset, this.offset + lines);
 
-		// Re-enable auto-follow when scrolled to bottom
-		if (this.offset >= maxOffset) {
+		// Re-enable auto-follow when scrolled to (or near) bottom
+		if (this.offset >= maxOffset - 0.5) {
+			this.offset = maxOffset;
 			this._autoFollow = true;
 		}
 	}
