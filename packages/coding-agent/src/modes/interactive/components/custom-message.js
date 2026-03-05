@@ -8,6 +8,7 @@ export class CustomMessageComponent extends Container {
     message;
     customRenderer;
     box;
+    spacer;
     customComponent;
     markdownTheme;
     _expanded = false;
@@ -16,7 +17,7 @@ export class CustomMessageComponent extends Container {
         this.message = message;
         this.customRenderer = customRenderer;
         this.markdownTheme = markdownTheme;
-        this.addChild(new Spacer(1));
+        this.spacer = new Spacer(1);
         // Create box with purple background (used for default rendering)
         this.box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
         this.rebuild();
@@ -38,12 +39,13 @@ export class CustomMessageComponent extends Container {
             this.customComponent = undefined;
         }
         this.removeChild(this.box);
+        this.removeChild(this.spacer);
         // Try custom renderer first - it handles its own styling
         if (this.customRenderer) {
             try {
                 const component = this.customRenderer(this.message, { expanded: this._expanded }, theme);
                 if (component) {
-                    // Custom renderer provides its own styled component
+                    // Custom renderer provides its own styled component — no spacer
                     this.customComponent = component;
                     this.addChild(component);
                     return;
@@ -53,7 +55,8 @@ export class CustomMessageComponent extends Container {
                 // Fall through to default rendering
             }
         }
-        // Default rendering uses our box
+        // Default rendering uses spacer + box
+        this.addChild(this.spacer);
         this.addChild(this.box);
         this.box.clear();
         // Default rendering: label + content
