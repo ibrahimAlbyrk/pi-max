@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
 	Box,
 	Container,
@@ -15,6 +16,7 @@ import stripAnsi from "strip-ansi";
 import type { ToolDefinition } from "../../../core/extensions/types.js";
 import { computeEditDiff, type EditDiffError, type EditDiffResult } from "../../../core/tools/edit-diff.js";
 import { allTools } from "../../../core/tools/index.js";
+import { expandPath } from "../../../core/tools/path-utils.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "../../../core/tools/truncate.js";
 import { convertToPng } from "../../../utils/image-convert.js";
 import { sanitizeBinaryOutput } from "../../../utils/shell.js";
@@ -39,6 +41,25 @@ function shortenPath(path: unknown): string {
 		return `~${path.slice(home.length)}`;
 	}
 	return path;
+}
+
+/**
+ * Resolve a raw path (possibly relative) to an absolute path using the given cwd.
+ */
+function resolveAbsolutePath(rawPath: string, cwd: string): string {
+	const expanded = expandPath(rawPath);
+	if (isAbsolute(expanded)) return expanded;
+	return resolvePath(cwd, expanded);
+}
+
+/**
+ * Wrap displayText in an OSC 8 hyperlink pointing to a file:// URL.
+ * Falls back to plain displayText if the terminal doesn't support hyperlinks.
+ */
+function fileHyperlink(displayText: string, absolutePath: string): string {
+	if (!getCapabilities().hyperlinks) return displayText;
+	const url = `file://${absolutePath}`;
+	return `\x1b]8;;${url}\x07${displayText}\x1b]8;;\x07`;
 }
 
 /**
@@ -611,11 +632,20 @@ export class ToolExecutionComponent extends Container {
 			const offset = this.args?.offset;
 			const limit = this.args?.limit;
 
-			let pathDisplay = path === null ? invalidArg : path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
+			let pathText = path === null ? invalidArg : path ? path : theme.fg("toolOutput", "...");
 			if (offset !== undefined || limit !== undefined) {
 				const startLine = offset ?? 1;
 				const endLine = limit !== undefined ? startLine + limit - 1 : "";
-				pathDisplay += theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
+				pathText += `:${startLine}${endLine ? `-${endLine}` : ""}`;
+			}
+			let pathDisplay: string;
+			if (path === null) {
+				pathDisplay = invalidArg;
+			} else if (path) {
+				const absPath = resolveAbsolutePath(rawPath!, this.cwd);
+				pathDisplay = theme.fg("accent", fileHyperlink(pathText, absPath));
+			} else {
+				pathDisplay = theme.fg("toolOutput", "...");
 			}
 
 			text = `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}`;
@@ -670,10 +700,17 @@ export class ToolExecutionComponent extends Container {
 			const fileContent = str(this.args?.content);
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
 
-			text =
-				theme.fg("toolTitle", theme.bold("write")) +
-				" " +
-				(path === null ? invalidArg : path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
+			let writePathDisplay: string;
+			if (path === null) {
+				writePathDisplay = invalidArg;
+			} else if (path) {
+				const absPath = resolveAbsolutePath(rawPath!, this.cwd);
+				writePathDisplay = theme.fg("accent", fileHyperlink(path, absPath));
+			} else {
+				writePathDisplay = theme.fg("toolOutput", "...");
+			}
+
+			text = `${theme.fg("toolTitle", theme.bold("write"))} ${writePathDisplay}`;
 
 			if (fileContent === null) {
 				text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
@@ -728,14 +765,21 @@ export class ToolExecutionComponent extends Container {
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
 
 			// Build path display, appending :line if we have diff info
-			let pathDisplay = path === null ? invalidArg : path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
 			const firstChangedLine =
 				(this.editDiffPreview && "firstChangedLine" in this.editDiffPreview
 					? this.editDiffPreview.firstChangedLine
 					: undefined) ||
 				(this.result && !this.result.isError ? this.result.details?.firstChangedLine : undefined);
-			if (firstChangedLine) {
-				pathDisplay += theme.fg("warning", `:${firstChangedLine}`);
+
+			let pathDisplay: string;
+			if (path === null) {
+				pathDisplay = invalidArg;
+			} else if (path) {
+				const absPath = resolveAbsolutePath(rawPath!, this.cwd);
+				const pathWithLine = firstChangedLine ? `${path}:${firstChangedLine}` : path;
+				pathDisplay = theme.fg("accent", fileHyperlink(pathWithLine, absPath));
+			} else {
+				pathDisplay = theme.fg("toolOutput", "...");
 			}
 
 			text = `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
@@ -764,7 +808,14 @@ export class ToolExecutionComponent extends Container {
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
 			const limit = this.args?.limit;
 
-			text = `${theme.fg("toolTitle", theme.bold("ls"))} ${path === null ? invalidArg : theme.fg("accent", path)}`;
+			let lsPathDisplay: string;
+			if (path === null) {
+				lsPathDisplay = invalidArg;
+			} else {
+				const absPath = resolveAbsolutePath(rawPath || ".", this.cwd);
+				lsPathDisplay = theme.fg("accent", fileHyperlink(path, absPath));
+			}
+			text = `${theme.fg("toolTitle", theme.bold("ls"))} ${lsPathDisplay}`;
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);
 			}
@@ -802,11 +853,18 @@ export class ToolExecutionComponent extends Container {
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
 			const limit = this.args?.limit;
 
+			let findPathDisplay: string;
+			if (path === null) {
+				findPathDisplay = invalidArg;
+			} else {
+				const absPath = resolveAbsolutePath(rawPath || ".", this.cwd);
+				findPathDisplay = fileHyperlink(path, absPath);
+			}
 			text =
 				theme.fg("toolTitle", theme.bold("find")) +
 				" " +
 				(pattern === null ? invalidArg : theme.fg("accent", pattern || "")) +
-				theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
+				theme.fg("toolOutput", ` in ${findPathDisplay}`);
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);
 			}
@@ -845,11 +903,18 @@ export class ToolExecutionComponent extends Container {
 			const glob = str(this.args?.glob);
 			const limit = this.args?.limit;
 
+			let grepPathDisplay: string;
+			if (path === null) {
+				grepPathDisplay = invalidArg;
+			} else {
+				const absPath = resolveAbsolutePath(rawPath || ".", this.cwd);
+				grepPathDisplay = fileHyperlink(path, absPath);
+			}
 			text =
 				theme.fg("toolTitle", theme.bold("grep")) +
 				" " +
 				(pattern === null ? invalidArg : theme.fg("accent", `/${pattern || ""}/`)) +
-				theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
+				theme.fg("toolOutput", ` in ${grepPathDisplay}`);
 			if (glob) {
 				text += theme.fg("toolOutput", ` (${glob})`);
 			}
@@ -895,7 +960,10 @@ export class ToolExecutionComponent extends Container {
 			if (this.args?.content) {
 				text += theme.fg("warning", "content ");
 				text += theme.fg("accent", `"${this.args.content}"`);
-				if (this.args.path) text += theme.fg("dim", ` in ${this.args.path}`);
+				if (this.args.path) {
+					const searchAbsPath = resolveAbsolutePath(String(this.args.path), this.cwd);
+					text += theme.fg("dim", ` in ${fileHyperlink(String(this.args.path), searchAbsPath)}`);
+				}
 			} else if (this.args?.query) {
 				const q = String(this.args.query);
 				const isRegex = q.startsWith("/") && q.endsWith("/");
@@ -903,8 +971,12 @@ export class ToolExecutionComponent extends Container {
 				text += theme.fg("accent", `"${q}"`);
 			} else {
 				text += theme.fg("muted", "browse ");
-				if (this.args?.path) text += theme.fg("accent", this.args.path);
-				else text += theme.fg("dim", ".");
+				if (this.args?.path) {
+					const browseAbsPath = resolveAbsolutePath(String(this.args.path), this.cwd);
+					text += theme.fg("accent", fileHyperlink(String(this.args.path), browseAbsPath));
+				} else {
+					text += theme.fg("dim", ".");
+				}
 				if (this.args?.depth) text += theme.fg("dim", ` depth=${this.args.depth}`);
 			}
 

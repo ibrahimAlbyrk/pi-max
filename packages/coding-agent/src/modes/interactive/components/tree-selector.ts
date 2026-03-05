@@ -1,7 +1,9 @@
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
 	type Component,
 	Container,
 	type Focusable,
+	getCapabilities,
 	getEditorKeybindings,
 	Input,
 	matchesKey,
@@ -11,6 +13,7 @@ import {
 	truncateToWidth,
 } from "@mariozechner/pi-tui";
 import type { SessionTreeNode } from "../../../core/session-manager.js";
+import { expandPath } from "../../../core/tools/path-utils.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
@@ -765,15 +768,26 @@ class TreeList implements Component {
 	}
 
 	private formatToolCall(name: string, args: Record<string, unknown>): string {
+		const home = process.env.HOME || process.env.USERPROFILE || "";
+		const cwd = process.cwd();
+		const supportsLinks = getCapabilities().hyperlinks;
+
 		const shortenPath = (p: string): string => {
-			const home = process.env.HOME || process.env.USERPROFILE || "";
 			if (home && p.startsWith(home)) return `~${p.slice(home.length)}`;
 			return p;
 		};
 
+		const wrapFileLink = (displayText: string, rawPath: string): string => {
+			if (!supportsLinks) return displayText;
+			const expanded = expandPath(rawPath);
+			const absPath = isAbsolute(expanded) ? expanded : resolvePath(cwd, expanded);
+			return `\x1b]8;;file://${absPath}\x07${displayText}\x1b]8;;\x07`;
+		};
+
 		switch (name) {
 			case "read": {
-				const path = shortenPath(String(args.path || args.file_path || ""));
+				const raw = String(args.path || args.file_path || "");
+				const path = shortenPath(raw);
 				const offset = args.offset as number | undefined;
 				const limit = args.limit as number | undefined;
 				let display = path;
@@ -782,15 +796,17 @@ class TreeList implements Component {
 					const end = limit !== undefined ? start + limit - 1 : "";
 					display += `:${start}${end ? `-${end}` : ""}`;
 				}
-				return `[read: ${display}]`;
+				return `[read: ${wrapFileLink(display, raw)}]`;
 			}
 			case "write": {
-				const path = shortenPath(String(args.path || args.file_path || ""));
-				return `[write: ${path}]`;
+				const raw = String(args.path || args.file_path || "");
+				const path = shortenPath(raw);
+				return `[write: ${wrapFileLink(path, raw)}]`;
 			}
 			case "edit": {
-				const path = shortenPath(String(args.path || args.file_path || ""));
-				return `[edit: ${path}]`;
+				const raw = String(args.path || args.file_path || "");
+				const path = shortenPath(raw);
+				return `[edit: ${wrapFileLink(path, raw)}]`;
 			}
 			case "bash": {
 				const rawCmd = String(args.command || "");
@@ -802,17 +818,20 @@ class TreeList implements Component {
 			}
 			case "grep": {
 				const pattern = String(args.pattern || "");
-				const path = shortenPath(String(args.path || "."));
-				return `[grep: /${pattern}/ in ${path}]`;
+				const raw = String(args.path || ".");
+				const path = shortenPath(raw);
+				return `[grep: /${pattern}/ in ${wrapFileLink(path, raw)}]`;
 			}
 			case "find": {
 				const pattern = String(args.pattern || "");
-				const path = shortenPath(String(args.path || "."));
-				return `[find: ${pattern} in ${path}]`;
+				const raw = String(args.path || ".");
+				const path = shortenPath(raw);
+				return `[find: ${pattern} in ${wrapFileLink(path, raw)}]`;
 			}
 			case "ls": {
-				const path = shortenPath(String(args.path || "."));
-				return `[ls: ${path}]`;
+				const raw = String(args.path || ".");
+				const path = shortenPath(raw);
+				return `[ls: ${wrapFileLink(path, raw)}]`;
 			}
 			default: {
 				// Custom tool - show name and truncated JSON args
