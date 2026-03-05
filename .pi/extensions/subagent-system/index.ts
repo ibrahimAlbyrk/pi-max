@@ -59,11 +59,6 @@ export default function (pi: ExtensionAPI) {
       "When NOT to use:",
       "• Reading a single known file you're about to edit — use read directly",
       "",
-      "After spawning:",
-      "• Results arrive automatically as new messages — do NOT poll or call list_agents",
-      "• STOP immediately — do NOT make any more tool calls or continue working",
-      "• Send a brief status to the user and end your turn",
-      "",
       "Modes:",
       "• Predefined: 'agent' + 'task' only. System loads config automatically.",
       "• Runtime: 'name' + 'systemPrompt' + 'task' for custom agents.",
@@ -140,10 +135,9 @@ export default function (pi: ExtensionAPI) {
         return {
           content: [{
             type: "text",
-            text: `Agent "${agentLabel}" started (${mode} mode, id: ${handle.id}).\n` +
-                  `Task: ${params.task}\n` +
+            text: `Agent "${agentLabel}" spawned (${mode} mode).\n` +
                   `Runtime: ${handle.runtimeMode}.\n` +
-                  `You will be notified when it completes.`,
+                  `Results will be delivered by the system as a notification when the agent completes.`,
           }],
           details: {
             agentId: handle.id,
