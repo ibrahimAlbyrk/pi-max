@@ -4,7 +4,7 @@ description: General-purpose worker with full tool access for implementing chang
 version: 1
 agentConfig:
   tools: read,bash,edit,write
-  model: claude-sonnet-4-5
+  model: claude-sonnet-4-6
   color: purple
 variables:
   - name: TOOLS_LIST

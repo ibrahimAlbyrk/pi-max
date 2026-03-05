@@ -3,7 +3,7 @@ name: agents/explorer
 description: Fast codebase reconnaissance - finds relevant code and returns structured context
 version: 1
 agentConfig:
-  tools: read,grep,find,ls,bash,tree_search,lsp_diagnostics,lsp_definition,lsp_references
+  tools: read,tree_search,bash,tree_search,lsp_diagnostics,lsp_definition,lsp_references
   model: claude-haiku-4-5
   thinking: "off"
   color: blue

@@ -4,7 +4,7 @@ description: Code review agent — analyzes changes for bugs, security, and qual
 version: 1
 agentConfig:
   tools: read,grep,find,ls,bash
-  model: claude-sonnet-4-5
+  model: claude-sonnet-4-6
   thinking: medium
   color: green
 variables:
