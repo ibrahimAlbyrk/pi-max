@@ -35,9 +35,9 @@ export class AlternateScreenManager {
 		this.active = true;
 
 		// Switch to alternate screen buffer + clear it + move cursor to home
-		// Enable SGR mouse reporting for wheel events (?1000h = button events, ?1006h = SGR format)
+		// Enable SGR mouse reporting (?1003h = any-event tracking for click+drag+hover, ?1006h = SGR format)
 		// Enable focus reporting (?1004h) to detect tab switches and re-enable mouse reporting
-		this.terminal.write("\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h\x1b[?1004h");
+		this.terminal.write("\x1b[?1049h\x1b[2J\x1b[H\x1b[?1003h\x1b[?1006h\x1b[?1004h");
 		// Hide cursor during rendering (shown explicitly at input position)
 		this.terminal.hideCursor();
 
@@ -55,7 +55,7 @@ export class AlternateScreenManager {
 
 		// Disable focus reporting + mouse reporting + show cursor + restore original screen buffer
 		this.terminal.showCursor();
-		this.terminal.write("\x1b[?1004l\x1b[?1006l\x1b[?1000l\x1b[?1049l");
+		this.terminal.write("\x1b[?1004l\x1b[?1006l\x1b[?1003l\x1b[?1049l");
 
 		this.removeCleanupHandlers();
 	}
@@ -72,7 +72,7 @@ export class AlternateScreenManager {
 			if (this.active) {
 				// Direct write to stdout — terminal object may be stopped
 				// Disable focus reporting + mouse reporting + show cursor + restore screen
-				process.stdout.write("\x1b[?1004l\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l");
+				process.stdout.write("\x1b[?1004l\x1b[?1006l\x1b[?1003l\x1b[?25h\x1b[?1049l");
 				this.active = false;
 			}
 		};

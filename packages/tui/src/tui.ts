@@ -9,6 +9,10 @@ import { AlternateScreenManager } from "./alternate-screen.js";
 import { isKeyRelease, matchesKey } from "./keys.js";
 import { LayoutEngine, type LayoutRegion } from "./layout.js";
 import { ScrollController } from "./scroll-controller.js";
+import { copyToClipboard, openUrl } from "./selection/clipboard.js";
+import { PositionMapper } from "./selection/position-mapper.js";
+import { SelectionManager } from "./selection/selection-manager.js";
+import { applyLinkHoverHighlight, applySelectionHighlight } from "./selection/selection-renderer.js";
 import type { Terminal } from "./terminal.js";
 import {
 	deleteAllKittyImages,
@@ -239,6 +243,18 @@ export class TUI extends Container {
 	private alternateScreen: AlternateScreenManager | null = null;
 	private scrollControllers = new Map<string, ScrollController>();
 	private previousRegionViewport: string[] = [];
+
+	// Mouse text selection
+	private positionMapper = new PositionMapper();
+	private selectionManager = new SelectionManager(this.positionMapper, () => this.requestRender());
+	private lastDragRenderTime = 0;
+	private static DRAG_RENDER_INTERVAL_MS = 33; // ~30fps during drag
+	private autoScrollTimer: ReturnType<typeof setInterval> | null = null;
+	private autoScrollRegionId: string | null = null;
+	private mouseDownPos: { row: number; col: number } | null = null;
+	private hoveredLink: { row: number; startCol: number; endCol: number; url: string } | null = null;
+	private lastHoverCheckTime = 0;
+	private static HOVER_CHECK_INTERVAL_MS = 50; // 20fps hover detection
 
 	// Overlay stack for modal components rendered on top of base content
 	private overlayStack: {
@@ -550,7 +566,7 @@ export class TUI extends Container {
 		if (data === "\x1b[I") {
 			// Re-enable SGR mouse reporting (terminal may have dropped it on tab switch)
 			if (this.regionMode) {
-				this.terminal.write("\x1b[?1000h\x1b[?1006h");
+				this.terminal.write("\x1b[?1003h\x1b[?1006h");
 			}
 			this.requestRender(true);
 			return;
@@ -560,8 +576,8 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Handle mouse wheel events in region mode (SGR format: \x1b[<64;col;rowM / \x1b[<65;col;rowM)
-		if (this.regionMode && this.handleMouseWheel(data)) {
+		// Handle mouse events in region mode (SGR format: \x1b[<button;col;rowM/m)
+		if (this.regionMode && this.handleMouseEvent(data)) {
 			return;
 		}
 
@@ -585,6 +601,11 @@ export class TUI extends Container {
 			}
 		}
 
+		// Clear text selection on any keystroke (Escape or typing clears selection)
+		if (this.selectionManager.hasSelection()) {
+			this.selectionManager.clear();
+		}
+
 		// Pass input to focused component (including Ctrl+C)
 		// The focused component can decide how to handle Ctrl+C
 		if (this.focusedComponent?.handleInput) {
@@ -600,17 +621,34 @@ export class TUI extends Container {
 	/**
 	 * Handle SGR mouse events in region mode. Returns true if event was consumed.
 	 * SGR format: \x1b[<button;col;rowM (press) / \x1b[<button;col;rowm (release)
-	 * Button 64 = scroll up, 65 = scroll down
-	 * All other mouse events are consumed (ignored) to prevent them reaching the editor.
+	 *
+	 * Button codes:
+	 *   0 = left click, 1 = middle, 2 = right
+	 *   32 = left drag (motion with left button held)
+	 *   64 = scroll up, 65 = scroll down
+	 *   M suffix = press/motion, m suffix = release
 	 */
-	private handleMouseWheel(data: string): boolean {
-		const match = data.match(/^\x1b\[<(\d+);(\d+);(\d+)[Mm]$/);
+	private handleMouseEvent(data: string): boolean {
+		const match = data.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/);
 		if (!match) return false;
 
-		const button = parseInt(match[1], 10);
+		const rawButton = parseInt(match[1], 10);
+		// SGR coordinates are 1-indexed; convert to 0-indexed
+		const col = parseInt(match[2], 10) - 1;
+		const row = parseInt(match[3], 10) - 1;
+		const isRelease = match[4] === "m";
+		const screen = { row, col };
+
+		// Strip modifier bits (Shift=bit2, Meta=bit3, Ctrl=bit4) to get base button
+		const button = rawButton & ~(4 | 8 | 16);
 
 		// Scroll wheel events: route to scrollable region
 		if (button === 64 || button === 65) {
+			// Scroll clears selection and hover
+			if (this.selectionManager.hasSelection()) {
+				this.selectionManager.clear();
+			}
+			this.hoveredLink = null;
 			for (const region of this.regions) {
 				if (region.scrollable) {
 					const ctrl = this.scrollControllers.get(region.id);
@@ -625,10 +663,149 @@ export class TUI extends Container {
 					}
 				}
 			}
+			return true;
 		}
 
-		// Consume ALL mouse events (clicks, drags, releases) — don't forward to editor
+		// Left button press
+		if (button === 0 && !isRelease) {
+			this.stopAutoScroll();
+			this.mouseDownPos = { ...screen };
+			const content = this.positionMapper.screenToContent(screen);
+			this.autoScrollRegionId = content?.regionId ?? null;
+			this.selectionManager.onMouseDown(screen);
+			return true;
+		}
+
+		// Left button drag (button 32 = motion with left button held)
+		if (button === 32) {
+			this.handleDragAutoScroll(screen);
+			// Rate-limit drag renders to ~30fps
+			const now = Date.now();
+			if (now - this.lastDragRenderTime < TUI.DRAG_RENDER_INTERVAL_MS) {
+				// Still update selection state but skip render
+				this.selectionManager.onMouseDrag(screen);
+				return true;
+			}
+			this.lastDragRenderTime = now;
+			this.selectionManager.onMouseDrag(screen);
+			return true;
+		}
+
+		// Left button release
+		if (button === 0 && isRelease) {
+			this.stopAutoScroll();
+			this.selectionManager.onMouseUp(screen);
+
+			if (this.selectionManager.hasSelection()) {
+				// Drag happened → copy selection to clipboard
+				const text = this.selectionManager.getSelectedText();
+				if (text) {
+					copyToClipboard(text, (d) => this.terminal.write(d));
+				}
+			} else if (this.mouseDownPos && this.mouseDownPos.row === screen.row && this.mouseDownPos.col === screen.col) {
+				// Click without drag → check for hyperlink
+				const url = this.positionMapper.getUrlAtPosition(screen);
+				if (url) {
+					openUrl(url);
+				}
+			}
+
+			this.mouseDownPos = null;
+			return true;
+		}
+
+		// Mouse motion without button (button 35 = motion bit + no-button) → hover detection
+		if (button === 35) {
+			const now = Date.now();
+			if (now - this.lastHoverCheckTime < TUI.HOVER_CHECK_INTERVAL_MS) return true;
+			this.lastHoverCheckTime = now;
+
+			const linkBounds = this.positionMapper.getLinkBoundsAtPosition(screen);
+			const prevHover = this.hoveredLink;
+
+			if (linkBounds) {
+				const newHover = {
+					row: screen.row,
+					startCol: linkBounds.startCol,
+					endCol: linkBounds.endCol,
+					url: linkBounds.url,
+				};
+				// Only re-render if hover state changed
+				if (
+					!prevHover ||
+					prevHover.row !== newHover.row ||
+					prevHover.startCol !== newHover.startCol ||
+					prevHover.url !== newHover.url
+				) {
+					this.hoveredLink = newHover;
+					this.requestRender();
+				}
+			} else if (prevHover) {
+				this.hoveredLink = null;
+				this.requestRender();
+			}
+			return true;
+		}
+
+		// Consume all other mouse events (middle click, right click, etc.)
 		return true;
+	}
+
+	/**
+	 * Handle auto-scrolling when dragging past the edges of a scrollable region.
+	 */
+	private handleDragAutoScroll(screen: { row: number; col: number }): void {
+		const dragRegion = this.selectionManager.dragging ? this.autoScrollRegionId : null;
+		if (!dragRegion) {
+			// Find the region the selection started in
+			const sel = this.selectionManager.getSelection();
+			if (!sel) return;
+			this.autoScrollRegionId = sel.anchor.regionId;
+		}
+
+		const regionId = this.autoScrollRegionId;
+		if (!regionId) return;
+
+		const bounds = this.positionMapper.getRegionBounds(regionId);
+		const scrollCtrl = this.scrollControllers.get(regionId);
+		if (!bounds || !scrollCtrl) {
+			this.stopAutoScroll();
+			return;
+		}
+
+		const regionTop = bounds.startRow;
+		const regionBottom = bounds.startRow + bounds.height - 1;
+
+		if (screen.row < regionTop) {
+			// Dragging above region — scroll up
+			const distance = Math.min(regionTop - screen.row, 5);
+			this.startAutoScroll(scrollCtrl, "up", distance);
+		} else if (screen.row > regionBottom) {
+			// Dragging below region — scroll down
+			const distance = Math.min(screen.row - regionBottom, 5);
+			this.startAutoScroll(scrollCtrl, "down", distance);
+		} else {
+			this.stopAutoScroll();
+		}
+	}
+
+	private startAutoScroll(scrollCtrl: ScrollController, direction: "up" | "down", speed: number): void {
+		this.stopAutoScroll();
+		this.autoScrollTimer = setInterval(() => {
+			if (direction === "up") {
+				scrollCtrl.scrollUp(speed * 0.5);
+			} else {
+				scrollCtrl.scrollDown(speed * 0.5);
+			}
+			this.requestRender();
+		}, 50);
+	}
+
+	private stopAutoScroll(): void {
+		if (this.autoScrollTimer) {
+			clearInterval(this.autoScrollTimer);
+			this.autoScrollTimer = null;
+		}
 	}
 
 	private parseCellSizeResponse(): string {
@@ -1325,7 +1502,7 @@ export class TUI extends Container {
 			this.previousWidth = -1;
 			// Fix 1: proactively re-enable mouse reporting when display has been idle
 			// (mouse reporting can be silently dropped by terminals during idle periods)
-			this.terminal.write("\x1b[?1000h\x1b[?1006h");
+			this.terminal.write("\x1b[?1003h\x1b[?1006h");
 		}
 		this.lastRenderTime = now;
 
@@ -1341,19 +1518,29 @@ export class TUI extends Container {
 		// Calculate layout
 		const layouts = this.layoutEngine.calculate(this.regions, width, height);
 
+		// Track per-region data for position mapper and selection
+		const scrollOffsets = new Map<string, number>();
+		const regionViewportLines = new Map<string, string[]>();
+		const scrollIndicators = new Map<string, { top: boolean; bottom: boolean }>();
+
 		// Build viewport (flat array of exactly `height` lines)
 		const viewport: string[] = [];
 		for (const layout of layouts) {
 			let lines = layout.renderedLines;
+			let hasTopIndicator = false;
+			let hasBottomIndicator = false;
 
 			// Apply scroll for scrollable regions
 			const scrollCtrl = this.scrollControllers.get(layout.region.id);
 			if (scrollCtrl && layout.region.scrollable) {
 				lines = scrollCtrl.getVisibleSlice(lines, layout.height);
+				scrollOffsets.set(layout.region.id, scrollCtrl.getScrollInfo().offset);
 
 				// Add scroll indicators (consume 1 line each from viewport)
 				const info = scrollCtrl.getScrollInfo();
 				if (info.linesAbove > 0 || info.linesBelow > 0) {
+					hasTopIndicator = info.linesAbove > 0;
+					hasBottomIndicator = info.linesBelow > 0;
 					const result: string[] = [];
 					if (info.linesAbove > 0) {
 						const indicator = `─── ↑ ${info.linesAbove} more `;
@@ -1376,6 +1563,54 @@ export class TUI extends Container {
 			} else {
 				// Non-scrollable: just take what fits
 				lines = lines.slice(0, layout.height);
+				scrollOffsets.set(layout.region.id, 0);
+			}
+
+			// Store viewport lines for this region (content lines without indicators)
+			const contentLines: string[] = [];
+			const startIdx = hasTopIndicator ? 1 : 0;
+			const endIdx = hasBottomIndicator ? lines.length - 1 : lines.length;
+			for (let i = startIdx; i < endIdx; i++) {
+				contentLines.push(lines[i]);
+			}
+			regionViewportLines.set(layout.region.id, contentLines);
+			scrollIndicators.set(layout.region.id, { top: hasTopIndicator, bottom: hasBottomIndicator });
+
+			// Apply selection highlighting to content lines (not indicators)
+			if (this.selectionManager.hasSelection()) {
+				const regionId = layout.region.id;
+				const scrollOffset = scrollOffsets.get(regionId) ?? 0;
+				for (let i = 0; i < lines.length; i++) {
+					// Skip indicator lines
+					if (hasTopIndicator && i === 0) continue;
+					if (hasBottomIndicator && i === lines.length - 1) continue;
+
+					// Calculate viewport row (content index without indicator offset)
+					const viewportRow = hasTopIndicator ? i - 1 : i;
+					const sel = this.selectionManager.getSelectionForLine(regionId, viewportRow, scrollOffset);
+					if (sel) {
+						const lineWidth = visibleWidth(lines[i]);
+						lines[i] = applySelectionHighlight(lines[i], sel.startCol, sel.endCol, lineWidth);
+					}
+				}
+			}
+
+			// Apply link hover highlighting
+			if (this.hoveredLink) {
+				const screenRowBase = layout.startRow;
+				for (let i = 0; i < lines.length; i++) {
+					const screenRow = screenRowBase + i;
+					if (screenRow === this.hoveredLink.row) {
+						const lineWidth = visibleWidth(lines[i]);
+						lines[i] = applyLinkHoverHighlight(
+							lines[i],
+							this.hoveredLink.startCol,
+							this.hoveredLink.endCol,
+							lineWidth,
+						);
+						break;
+					}
+				}
 			}
 
 			// Add lines to viewport, padding to region height
@@ -1383,6 +1618,9 @@ export class TUI extends Container {
 				viewport.push(i < lines.length ? lines[i] : "");
 			}
 		}
+
+		// Update position mapper with current layout data
+		this.positionMapper.setRegionLayouts(layouts, scrollOffsets, regionViewportLines, scrollIndicators);
 
 		// Ensure viewport is exactly terminal height
 		while (viewport.length < height) viewport.push("");
@@ -1442,7 +1680,7 @@ export class TUI extends Container {
 			// Full repaint — clear screen + reset attributes + re-enable mouse reporting
 			// Mouse reporting can be lost after idle periods, subprocess noise, or terminal resets.
 			// Re-enabling it here (Fix 4) ensures it is always active after any forced repaint.
-			buffer += "\x1b[0m\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h";
+			buffer += "\x1b[0m\x1b[2J\x1b[H\x1b[?1003h\x1b[?1006h";
 			if (isKittyRegion) buffer += deleteAllKittyImages();
 			for (let i = 0; i < finalLines.length; i++) {
 				buffer += `\x1b[${i + 1};1H\x1b[2K${finalLines[i]}`;

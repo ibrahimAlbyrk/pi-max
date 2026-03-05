@@ -54,6 +54,21 @@ export { LayoutEngine, type LayoutRegion, type RegionLayout, type RegionSizing }
 export { RegionRenderer, type RegionState } from "./region-renderer.js";
 // Scroll controller
 export { ScrollController, type ScrollInfo } from "./scroll-controller.js";
+// Selection
+export { copyToClipboard, openUrl } from "./selection/clipboard.js";
+export {
+	type ContentPosition,
+	charIndexToVisualCol,
+	extractOsc8LinkBoundsAtCol,
+	extractOsc8UrlAtCol,
+	type LinkBounds,
+	PositionMapper,
+	type ScreenPosition,
+	stripAnsi,
+	visualColToCharIndex,
+} from "./selection/position-mapper.js";
+export { type LineSelection, SelectionManager, type SelectionRange } from "./selection/selection-manager.js";
+export { applyLinkHoverHighlight, applySelectionHighlight } from "./selection/selection-renderer.js";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.js";
 // Terminal interface and implementations
