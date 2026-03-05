@@ -93,7 +93,7 @@ export function createMessageAgentTool(manager: AgentManager, ownerHandle: Agent
       };
     },
 
-    renderCall(args: any, theme: any) {
+    renderCall(args: any, _options: any, theme: any) {
       const to = args.to || "?";
       const msg = args.message || "...";
       const priority = args.priority || "normal";

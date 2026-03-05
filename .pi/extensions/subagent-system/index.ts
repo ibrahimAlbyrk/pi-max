@@ -82,7 +82,7 @@ export default function (pi: ExtensionAPI) {
         description: "Runtime mode only: system prompt. Ignored if 'agent' is set.",
       })),
       tools: Type.Optional(Type.Array(Type.String(), {
-        description: "Override: tool list. Available: read,bash,edit,write,grep,find,ls.",
+        description: "Override: tool list. Available tools are all built-in tools registered in the tool registry.",
       })),
       model: Type.Optional(Type.String({
         description: "Override: model to use.",
@@ -162,12 +162,6 @@ export default function (pi: ExtensionAPI) {
     },
 
     renderCall(args, options, theme) {
-      // options: { expanded } injected by pi core (tool-execution.js)
-      // Backward compat: if called without options, treat as expanded
-      if (!theme && options && typeof options.fg === "function") {
-        theme = options as any;
-        options = { expanded: true };
-      }
       const expanded = options?.expanded ?? true;
       const agentName = args.agent || args.name || "runtime";
       const task = args.task || "...";

@@ -160,7 +160,7 @@ export const askUserTool: ToolDefinition<typeof AskUserSchema, AskUserDetails> =
 		};
 	},
 
-	renderCall(args, theme) {
+	renderCall(args, _options, theme) {
 		const qs = (args.questions as QuestionInput[]) || [];
 		if (qs.length === 0) return undefined;
 

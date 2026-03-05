@@ -203,7 +203,7 @@ export const askQuestionTool: ToolDefinition<typeof AskQuestionParams, AskQuesti
 		};
 	},
 
-	renderCall(args, theme) {
+	renderCall(args, _options, theme) {
 		const qs = (args.questions as QuestionInput[]) || [];
 		const count = qs.length;
 		const labels = qs.map((q) => q.label || q.id).join(", ");

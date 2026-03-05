@@ -126,7 +126,7 @@ export default function question(pi: ExtensionAPI) {
 			};
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			let text = theme.fg("toolTitle", theme.bold("question ")) + theme.fg("muted", args.question);
 			const opts = Array.isArray(args.options) ? args.options : [];
 			if (opts.length) {

@@ -308,7 +308,7 @@ export class ToolExecutionComponent extends Container {
             // Render call component
             if (this.toolDefinition.renderCall) {
                 try {
-                    const callComponent = this.toolDefinition.renderCall(this.args, theme);
+                    const callComponent = this.toolDefinition.renderCall(this.args, { expanded: this.expanded }, theme);
                     if (callComponent) {
                         this.contentBox.addChild(callComponent);
                     }

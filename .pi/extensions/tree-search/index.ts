@@ -1148,7 +1148,7 @@ export default function (pi: ExtensionAPI) {
 			),
 		}),
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			let text = theme.fg("toolTitle", theme.bold("tree_search "));
 
 			if (args.content) {

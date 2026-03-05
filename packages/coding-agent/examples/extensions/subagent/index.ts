@@ -646,7 +646,7 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const scope: AgentScope = args.agentScope ?? "user";
 			if (args.chain && args.chain.length > 0) {
 				let text =

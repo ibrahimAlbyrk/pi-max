@@ -520,7 +520,7 @@ Examples:
 			return result;
 		},
 
-		renderCall(args, theme) { return taskRenderCall(args, theme); },
+		renderCall(args, _options, theme) { return taskRenderCall(args, theme); },
 		renderResult(result, options, theme) { return taskRenderResult(result, options, theme); },
 	});
 

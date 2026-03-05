@@ -48,7 +48,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 					return undefined;
 				}
 
-				const component = toolDef.renderCall(args, theme);
+				const component = toolDef.renderCall(args, { expanded: true }, theme);
 				if (!component) {
 					return undefined;
 				}

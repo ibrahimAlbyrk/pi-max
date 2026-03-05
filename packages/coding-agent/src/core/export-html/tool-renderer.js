@@ -20,7 +20,7 @@ export function createToolHtmlRenderer(deps) {
                 if (!toolDef?.renderCall) {
                     return undefined;
                 }
-                const component = toolDef.renderCall(args, theme);
+                const component = toolDef.renderCall(args, { expanded: true }, theme);
                 const lines = component.render(width);
                 return ansiLinesToHtml(lines);
             }

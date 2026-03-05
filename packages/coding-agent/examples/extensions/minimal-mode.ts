@@ -80,7 +80,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.read.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const path = shortenPath(args.path || "");
 			let pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
 
@@ -127,7 +127,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.bash.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const command = args.command || "...";
 			const timeout = args.timeout as number | undefined;
 			const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
@@ -176,7 +176,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.write.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const path = shortenPath(args.path || "");
 			const pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
 			const lineCount = args.content ? args.content.split("\n").length : 0;
@@ -218,7 +218,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.edit.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const path = shortenPath(args.path || "");
 			const pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
 
@@ -263,7 +263,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.find.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const pattern = args.pattern || "";
 			const path = shortenPath(args.path || ".");
 			const limit = args.limit;
@@ -321,7 +321,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.grep.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const pattern = args.pattern || "";
 			const path = shortenPath(args.path || ".");
 			const glob = args.glob;
@@ -383,7 +383,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.ls.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const path = shortenPath(args.path || ".");
 			const limit = args.limit;
 

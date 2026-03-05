@@ -114,7 +114,7 @@ export default function imageGeneration(pi: ExtensionAPI) {
 			size: Type.Optional(StringEnum(IMAGE_SIZES)),
 		}),
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			let providerName: string;
 			try {
 				providerName = resolveProvider(args.provider).name;
@@ -203,7 +203,7 @@ export default function imageGeneration(pi: ExtensionAPI) {
 			size: Type.Optional(StringEnum(IMAGE_SIZES)),
 		}),
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			let providerName: string;
 			try {
 				providerName = resolveProvider(args.provider).name;

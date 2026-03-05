@@ -106,6 +106,7 @@ export type {
 	ToolCallEvent,
 	ToolDefinition,
 	ToolInfo,
+	ToolRenderCallOptions,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	TurnEndEvent,

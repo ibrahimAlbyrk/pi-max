@@ -220,7 +220,7 @@ export default function (pi: ExtensionAPI) {
 			}
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			let text = theme.fg("toolTitle", theme.bold("todo ")) + theme.fg("muted", args.action);
 			if (args.text) text += ` ${theme.fg("dim", `"${args.text}"`)}`;
 			if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;

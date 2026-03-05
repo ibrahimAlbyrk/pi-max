@@ -114,7 +114,7 @@ Examples:
 			}
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			const action = args?.action ?? "?";
 			const name = args?.name ?? args?.command ?? "";
 			return new Text(theme.bold("bg ") + theme.fg("accent", `${action}${name ? ` ${name}` : ""}`), 0, 0);

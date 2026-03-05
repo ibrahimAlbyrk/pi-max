@@ -132,7 +132,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		// Custom rendering of the tool call (shown before/during execution)
-		renderCall(args, theme) {
+		renderCall(args, _options, theme) {
 			let text = theme.fg("toolTitle", theme.bold("rg "));
 			text += theme.fg("accent", `"${args.pattern}"`);
 			if (args.path) {

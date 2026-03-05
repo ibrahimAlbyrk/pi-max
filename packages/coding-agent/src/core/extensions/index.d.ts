@@ -114,6 +114,7 @@ export type {
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
 	ToolInfo,
+	ToolRenderCallOptions,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,

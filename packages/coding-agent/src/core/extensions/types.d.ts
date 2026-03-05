@@ -330,6 +330,11 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Reload extensions, skills, prompts, and themes. */
 	reload(): Promise<void>;
 }
+/** Rendering options for tool call display */
+export interface ToolRenderCallOptions {
+	/** Whether the call view is expanded */
+	expanded: boolean;
+}
 /** Rendering options for tool results */
 export interface ToolRenderResultOptions {
 	/** Whether the result view is expanded */
@@ -358,7 +363,7 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<TDetails>>;
 	/** Custom rendering for tool call display */
-	renderCall?: (args: Static<TParams>, theme: Theme) => Component;
+	renderCall?: (args: Static<TParams>, options: ToolRenderCallOptions, theme: Theme) => Component;
 	/** Custom rendering for tool result display */
 	renderResult?: (result: AgentToolResult<TDetails>, options: ToolRenderResultOptions, theme: Theme) => Component;
 }
