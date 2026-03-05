@@ -11,14 +11,7 @@ import {
   AuthStorage,
   createAgentSession,
   createCodingTools,
-  createReadOnlyTools,
-  createReadTool,
-  createBashTool,
-  createEditTool,
-  createWriteTool,
-  createGrepTool,
-  createFindTool,
-  createLsTool,
+  createToolsByName,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -37,28 +30,6 @@ import type {
   ThinkingLevel,
 } from "../core/types.js";
 import { createEmptyUsageStats } from "../core/types.js";
-
-// Tool name → factory function mapping
-const TOOL_FACTORIES: Record<string, (cwd: string) => any> = {
-  read: createReadTool,
-  bash: createBashTool,
-  edit: createEditTool,
-  write: createWriteTool,
-  grep: createGrepTool,
-  find: createFindTool,
-  ls: createLsTool,
-};
-
-function createToolsFromNames(names: string[], cwd: string): any[] {
-  const tools: any[] = [];
-  for (const name of names) {
-    const factory = TOOL_FACTORIES[name.trim()];
-    if (factory) {
-      tools.push(factory(cwd));
-    }
-  }
-  return tools.length > 0 ? tools : createCodingTools(cwd);
-}
 
 /** Optional extra tools to inject into the agent's session (e.g., message_agent) */
 export type ExtraToolFactory = (handle: AgentHandle) => any[];
@@ -143,9 +114,9 @@ export class InProcessAgent implements AgentHandle {
         model = options._mainModel;
       }
 
-      // Create tools
-      const tools = options.tools
-        ? createToolsFromNames(options.tools, this.cwd)
+      // Create tools from requested names, falling back to default coding tools
+      const tools = options.tools?.length
+        ? createToolsByName(options.tools, this.cwd)
         : createCodingTools(this.cwd);
 
       // Inject extra tools (e.g., message_agent for agents with messaging permissions)

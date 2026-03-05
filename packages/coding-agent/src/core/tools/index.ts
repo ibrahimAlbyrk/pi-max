@@ -86,12 +86,35 @@ import { createFindTool, findTool } from "./find.js";
 import { createGrepTool, grepTool } from "./grep.js";
 import { createLsTool, lsTool } from "./ls.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
-import { createWebfetchTool, webfetchTool } from "./webfetch.js";
-import { createWebsearchTool, websearchTool } from "./websearch.js";
+import { createWebfetchTool } from "./webfetch.js";
+import { createWebsearchTool } from "./websearch.js";
 import { createWriteTool, writeTool } from "./write.js";
 
 /** Tool type (AgentTool from pi-ai) */
 export type Tool = AgentTool<any>;
+
+/**
+ * Single source of truth for all built-in tool factories.
+ * Maps tool name → factory function that creates a tool instance for a given cwd.
+ *
+ * When adding a new built-in tool, add it here — allTools, ToolName, and
+ * createToolsByName() all derive from this registry automatically.
+ */
+const _toolRegistry = {
+	read: (cwd: string) => createReadTool(cwd),
+	bash: (cwd: string) => createBashTool(cwd),
+	edit: (cwd: string) => createEditTool(cwd),
+	write: (cwd: string) => createWriteTool(cwd),
+	grep: (cwd: string) => createGrepTool(cwd),
+	find: (cwd: string) => createFindTool(cwd),
+	ls: (cwd: string) => createLsTool(cwd),
+	webfetch: (_cwd: string) => createWebfetchTool(),
+	websearch: (_cwd: string) => createWebsearchTool(),
+};
+
+export type ToolName = keyof typeof _toolRegistry;
+
+export const toolRegistry: Record<ToolName, (cwd: string) => Tool> = _toolRegistry;
 
 // Default tools for full access mode (using process.cwd())
 export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool];
@@ -99,20 +122,22 @@ export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool];
 // Read-only tools for exploration without modification (using process.cwd())
 export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool];
 
-// All available tools (using process.cwd())
-export const allTools = {
-	read: readTool,
-	bash: bashTool,
-	edit: editTool,
-	write: writeTool,
-	grep: grepTool,
-	find: findTool,
-	ls: lsTool,
-	webfetch: webfetchTool,
-	websearch: websearchTool,
-};
+// All available tools (using process.cwd()) — derived from toolRegistry
+export const allTools = Object.fromEntries(
+	Object.entries(toolRegistry).map(([name, factory]) => [name, factory(process.cwd())]),
+) as Record<ToolName, Tool>;
 
-export type ToolName = keyof typeof allTools;
+/**
+ * Create tools by name for a specific working directory.
+ * Used by subagent runtimes to create tool instances from YAML/parameter tool lists.
+ * Unknown tool names are silently skipped.
+ */
+export function createToolsByName(names: string[], cwd: string): Tool[] {
+	return names
+		.map((n) => toolRegistry[n.trim() as ToolName])
+		.filter(Boolean)
+		.map((factory) => factory(cwd));
+}
 
 export interface ToolsOptions {
 	/** Options for the read tool */
