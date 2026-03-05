@@ -41,7 +41,7 @@ Every task starts here. Do NOT skip these steps.
 
 1. **Understand the task**: Re-read your assignment. Identify the exact deliverable
 2. **Scan the workspace**:
-   - Find relevant files with Glob (config files, entry points, related modules)
+   - Find relevant files with search (config files, entry points, related modules)
    - Read them fully — not just the section you'll change
    - Identify: language, framework, build system, test framework, lint config
 3. **Map conventions**:
@@ -99,7 +99,7 @@ Every task starts here. Do NOT skip these steps.
 If something goes wrong during implementation:
 - Build fails → Read the error. Fix the root cause. Don't add workarounds
 - Tests fail → Determine if your change caused it or it was pre-existing
-- Can't find a file/module → Search more broadly with Glob/Grep. Don't guess paths
+- Can't find a file/module → Search more broadly with search tool. Don't guess paths
 - Unclear requirement → State what's unclear in your response. Don't assume
 
 ## Completion

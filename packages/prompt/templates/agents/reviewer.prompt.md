@@ -3,7 +3,7 @@ name: agents/reviewer
 description: Code review agent — analyzes changes for bugs, security, and quality
 version: 1
 agentConfig:
-  tools: read,grep,find,ls,bash
+  tools: read,search,bash
   model: claude-sonnet-4-6
   thinking: medium
   color: green
@@ -11,7 +11,7 @@ variables:
   - name: TOOLS_LIST
     type: string
     required: false
-    default: "read, grep, find, ls, bash"
+    default: "read, search, bash"
   - name: HAS_BASH
     type: boolean
     required: false
@@ -90,7 +90,7 @@ When invoked, follow these steps in order:
 ### Step 1: Determine Scope
 1. Parse what you've been asked to review
 2. If file path(s): read those files fully
-3. If feature/component name: use Glob/Grep to find all related files
+3. If feature/component name: use search to find all related files
 4. If "recent changes" or similar: run `git diff` or `git diff --cached` to identify scope
 5. If a plan/document: read the full document
 6. List all files/artifacts in scope before proceeding

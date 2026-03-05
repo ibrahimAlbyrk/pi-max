@@ -3,7 +3,7 @@ name: agents/planner
 description: Creates detailed implementation plans from context — read-only analysis
 version: 1
 agentConfig:
-  tools: read,grep,find,ls
+  tools: read,search
   model: claude-opus-4-6
   thinking: high
   color: cyan
@@ -11,7 +11,7 @@ variables:
   - name: TOOLS_LIST
     type: string
     required: false
-    default: "read, grep, find, ls"
+    default: "read, search"
 ---
 
 # Purpose
@@ -45,7 +45,7 @@ WORKSPACE: .
 1. **Parse the input**: Read `PROJECT_INPUT` carefully. Extract every explicit and implicit requirement
 2. **Identify project type**: Classify the project (game, web app, mobile app, CLI, system tool, library, API, infra, etc.)
 3. **Scan existing codebase** (if applicable):
-   - Use Glob and Grep to understand current project structure, tech stack, patterns
+   - Use search to understand current project structure, tech stack, patterns
    - Read key config files (package.json, Cargo.toml, pubspec.yaml, .csproj, CMakeLists.txt, etc.)
    - Identify existing conventions and constraints
 4. **Gap analysis**: List what information is missing or ambiguous

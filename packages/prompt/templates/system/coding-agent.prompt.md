@@ -43,9 +43,9 @@ Available tools:
 In addition to the tools above, you may have access to other custom tools depending on the project.
 
 Guidelines:
-- Prefer tree_search over grep/bash for file discovery and search — it's faster, optimized, and respects .gitignore
+- Use search for file discovery, directory browsing, and content search — it's fast, cached, and respects .gitignore
 - Use lsp_diagnostics to check for compilation errors after editing code
-- Use lsp_definition and lsp_references for navigating code — more accurate than grep for symbols
+- Use lsp_definition and lsp_references for navigating code — more accurate than search for symbols
 - Use read to examine files before editing. You must use this tool instead of cat or sed.
 - Use edit for precise changes (old text must match exactly)
 - Use write only for new files or complete rewrites
