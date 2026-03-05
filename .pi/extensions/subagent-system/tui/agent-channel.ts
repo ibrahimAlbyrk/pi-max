@@ -438,10 +438,6 @@ export class AgentChannelManager {
     this.inputBuffer = "";
     this.inputCursor = 0;
 
-    // Enable SGR mouse tracking so wheel events reach handleInput
-    // instead of being handled by the terminal (which scrolls the buffer)
-    process.stdout.write("\x1b[?1000h\x1b[?1006h");
-
     const result = await ctx.ui.custom<string | null>(
       (tui: any, _theme: any, _kb: any, done: (value: string | null) => void) => {
         let cachedChatLines: string[] | undefined;
@@ -608,9 +604,6 @@ export class AgentChannelManager {
       },
       { fullscreen: true },
     );
-
-    // Disable mouse tracking when feed panel closes
-    process.stdout.write("\x1b[?1000l\x1b[?1006l");
 
     return result;
   }
