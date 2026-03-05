@@ -637,6 +637,26 @@ export class InteractiveMode {
 		} else {
 			this.ui.terminal.setTitle(`π - ${cwdBasename}`);
 		}
+		this.updateEditorSessionBadge();
+	}
+
+	private static readonly MAX_SESSION_BADGE_LENGTH = 20;
+
+	private updateEditorSessionBadge(): void {
+		const name = this.sessionManager.getSessionName();
+		if (name) {
+			let display = name;
+			if (display.length > InteractiveMode.MAX_SESSION_BADGE_LENGTH) {
+				display = `${display.slice(0, InteractiveMode.MAX_SESSION_BADGE_LENGTH - 1)}…`;
+			}
+			const badge = `◆ ${display} ◆`;
+			const styled = theme.bold(theme.fg("accent", badge));
+			this.defaultEditor.setTopBorderBadge("session-name", styled);
+			this.editor.setTopBorderBadge?.("session-name", styled);
+		} else {
+			this.defaultEditor.setTopBorderBadge("session-name", undefined);
+			this.editor.setTopBorderBadge?.("session-name", undefined);
+		}
 	}
 
 	/**
@@ -1928,6 +1948,7 @@ export class InteractiveMode {
 
 		this.editorContainer.addChild(this.editor as Component);
 		this.ui.setFocus(this.editor as Component);
+		this.updateEditorSessionBadge();
 		this.ui.requestRender();
 	}
 
@@ -4014,6 +4035,7 @@ export class InteractiveMode {
 		// Clear and re-render the chat
 		this.chatContainer.clear();
 		this.renderInitialMessages();
+		this.updateTerminalTitle();
 		this.showStatus("Resumed session");
 	}
 
