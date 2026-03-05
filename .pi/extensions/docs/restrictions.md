@@ -79,7 +79,7 @@ This alone does not block anything. Add rules from the sections below as needed.
 
 ### `filesystem` - Filesystem Restrictions
 
-Controls which files the agent can access via `read`, `write`, `edit`, `grep`, `find`, `ls` tools.
+Controls which files the agent can access via `read`, `write`, `edit`, `search` tools.
 
 #### `allowedPaths`
 
@@ -281,11 +281,11 @@ Tools to disable entirely.
 }
 ```
 
-Available tool names: `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`
+Available tool names: `read`, `write`, `edit`, `bash`, `search`
 
 #### `readOnlyMode`
 
-When set to `true`, `write`, `edit`, and `bash` tools are blocked. `read`, `grep`, `find`, `ls` continue to work.
+When set to `true`, `write`, `edit`, and `bash` tools are blocked. `read` and `search` continue to work.
 
 ```json
 {
@@ -454,7 +454,7 @@ The first matching layer blocks the tool. Subsequent layers are not checked.
 
 - **Bash commands are not 100% secure.** Restrictions can be bypassed via techniques like variable expansion (`$HOME/.ssh`), subshells (`$(cat /etc/passwd)`), and base64 encoding. Regex-based pattern matching catches common dangerous commands but cannot cover every case.
 - **Only controls pi tools.** Messages sent to the LLM and extension tools are also in scope, but this is not an OS-level sandbox.
-- Path checking applies to the `path` parameter of `read`, `write`, `edit`, `grep`, `find`, `ls` tools. Paths inside bash commands are not checked by this mechanism (only caught by regex patterns).
+- Path checking applies to the `path` parameter of `read`, `write`, `edit`, `search` tools. Paths inside bash commands are not checked by this mechanism (only caught by regex patterns).
 
 ## Troubleshooting
 

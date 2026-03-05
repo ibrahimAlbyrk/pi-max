@@ -32,10 +32,10 @@ spawn_agent(name="custom", systemPrompt="Sen bir test uzmansin", task="Unit test
 
 | Agent | Amac | Araclar |
 |-------|------|---------|
-| `explorer` | Arastirma: arama, okuma, analiz, kod kesfetme | read, grep, ls, find |
+| `explorer` | Arastirma: arama, okuma, analiz, kod kesfetme | read, search, bash |
 | `worker` | Kod yazma/duzenleme | read, write, edit, bash |
-| `planner` | Mimari kararlar, tasarim | read, grep, ls, find |
-| `reviewer` | Kod inceleme: bug, guvenlik, kalite | read, grep, ls, find |
+| `planner` | Mimari kararlar, tasarim | read, search |
+| `reviewer` | Kod inceleme: bug, guvenlik, kalite | read, search, bash |
 
 ## Tool Parametreleri
 
@@ -78,7 +78,7 @@ Agent yapilandirmasi otomatik yuklenir. Sistem prompt'u, araclar ve diger ayarla
 ### 2. Calisma Zamani (Runtime)
 
 ```
-spawn_agent(name="security-auditor", systemPrompt="...", task="...", tools=["read", "grep"])
+spawn_agent(name="security-auditor", systemPrompt="...", task="...", tools=["read", "search"])
 ```
 
 Tamamen ozel agent tanimi. Sistem prompt'u ve araclar el ile belirtilir.

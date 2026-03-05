@@ -140,7 +140,7 @@ Ana icerik.
 | Dizin | Icerik |
 |-------|--------|
 | `system/` | Ana sistem prompt'lari (coding-agent, mom, pods, web-ui) |
-| `tools/` | Tool aciklamalari (read, write, edit, bash, grep, find, lsp_*, tree_search) |
+| `tools/` | Tool aciklamalari (read, write, edit, bash, search, lsp_*) |
 | `agents/` | Agent sistem prompt'lari (explorer, worker, planner, reviewer) |
 | `compaction/` | Context yonetimi (summarize, branch-summary, turn-prefix) |
 

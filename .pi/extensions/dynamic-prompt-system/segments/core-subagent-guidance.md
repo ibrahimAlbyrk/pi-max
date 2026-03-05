@@ -23,7 +23,7 @@ All other research (search, discover, analyze, compare, multi-file reads) → sp
   - When: PR review, security audit, post-implementation quality check, performance review
 
 ## Tool routing
-- `read`/`grep`/`ls`/`find` → ONLY for a single file you are about to EDIT in the same turn
+- `read`/`search` → ONLY for a single file you are about to EDIT in the same turn
 - Research (search, discover, analyze, understand, compare, list, multi-file reads) → explorer
 - Design/architecture decisions → planner
 - Code writing with clear spec → worker
