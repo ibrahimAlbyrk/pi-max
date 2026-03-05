@@ -86,4 +86,7 @@ export interface EditorComponent extends Component {
 
 	/** Set a badge on the bottom border (right-aligned). Pass undefined to remove. */
 	setBottomBorderBadge?(key: string, styledText: string | undefined): void;
+
+	/** Set a badge on the top border (right-aligned). Pass undefined to remove. */
+	setTopBorderBadge?(key: string, styledText: string | undefined): void;
 }

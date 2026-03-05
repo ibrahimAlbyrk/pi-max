@@ -177,6 +177,9 @@ export class Editor implements Component, Focusable {
 	// Bottom border badges (key → pre-styled ANSI string)
 	private bottomBorderBadges: Map<string, string> = new Map();
 
+	// Top border badges (key → pre-styled ANSI string)
+	private topBorderBadges: Map<string, string> = new Map();
+
 	// Autocomplete support
 	private autocompleteProvider?: AutocompleteProvider;
 	private autocompleteList?: SelectList;
@@ -241,6 +244,19 @@ export class Editor implements Component, Focusable {
 			this.bottomBorderBadges.delete(key);
 		} else {
 			this.bottomBorderBadges.set(key, styledText);
+		}
+	}
+
+	/**
+	 * Set a badge on the top border (right-aligned).
+	 * @param key Unique identifier for the badge
+	 * @param styledText Pre-styled ANSI string to display, or undefined to remove
+	 */
+	setTopBorderBadge(key: string, styledText: string | undefined): void {
+		if (styledText === undefined) {
+			this.topBorderBadges.delete(key);
+		} else {
+			this.topBorderBadges.set(key, styledText);
 		}
 	}
 
@@ -387,11 +403,40 @@ export class Editor implements Component, Focusable {
 		const leftPadding = " ".repeat(paddingX);
 		const rightPadding = leftPadding;
 
+		// Compose badge suffix for top border (right-aligned)
+		let topBadgeSuffix = "";
+		let topBadgeSuffixWidth = 0;
+
+		if (this.topBorderBadges.size > 0) {
+			const badges: string[] = [];
+			for (const badge of this.topBorderBadges.values()) {
+				badges.push(badge);
+			}
+			topBadgeSuffix = badges.join(" ");
+			topBadgeSuffixWidth = visibleWidth(topBadgeSuffix);
+		}
+
 		// Render top border (with scroll indicator if scrolled down)
+		const topBadgeTrailing = 2; // trailing border chars after badge
 		if (this.scrollOffset > 0) {
 			const indicator = `─── ↑ ${this.scrollOffset} more `;
-			const remaining = width - visibleWidth(indicator);
-			result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
+			const indicatorWidth = visibleWidth(indicator);
+			if (topBadgeSuffixWidth > 0) {
+				const totalBadgeWidth = topBadgeSuffixWidth + 2 + topBadgeTrailing; // space + badge + space + trailing
+				const fillWidth = Math.max(0, width - indicatorWidth - totalBadgeWidth);
+				const trailing = "─".repeat(topBadgeTrailing);
+				result.push(
+					`${this.borderColor(`${indicator}${"─".repeat(fillWidth)}`)} ${topBadgeSuffix} ${this.borderColor(trailing)}`,
+				);
+			} else {
+				const remaining = width - indicatorWidth;
+				result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
+			}
+		} else if (topBadgeSuffixWidth > 0) {
+			const totalBadgeWidth = topBadgeSuffixWidth + 2 + topBadgeTrailing; // space + badge + space + trailing
+			const fillWidth = Math.max(0, width - totalBadgeWidth);
+			const trailing = "─".repeat(topBadgeTrailing);
+			result.push(`${this.borderColor("─".repeat(fillWidth))} ${topBadgeSuffix} ${this.borderColor(trailing)}`);
 		} else {
 			result.push(horizontal.repeat(width));
 		}
