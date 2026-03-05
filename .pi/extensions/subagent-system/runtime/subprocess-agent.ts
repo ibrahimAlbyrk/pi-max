@@ -58,6 +58,7 @@ export class SubProcessAgent implements AgentHandle {
   private thinkingLevel: ThinkingLevel | undefined;
   private rpcReady = false;
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
+  private completionTimer: ReturnType<typeof setTimeout> | null = null;
   private hasReceivedActivity = false;
   private hasEmittedStarted = false;
   private pendingRequests = new Map<string, { resolve: (response: any) => void; reject: (error: Error) => void }>();
@@ -66,6 +67,15 @@ export class SubProcessAgent implements AgentHandle {
 
   /** Timeout in ms for first activity from subprocess (default: 60s) */
   private static readonly ACTIVITY_TIMEOUT_MS = 60_000;
+
+  /**
+   * Delay in ms before treating agent_end as true task completion.
+   * After agent_end, the subprocess may trigger auto-retry or auto-compaction
+   * which emits events (auto_retry_start, auto_compaction_start, agent_start)
+   * BEFORE the new agent loop begins. 500ms is generous — these events arrive
+   * within a few ms since they're in the same process event loop.
+   */
+  private static readonly COMPLETION_DELAY_MS = 500;
 
   constructor(
     id: string,
@@ -164,6 +174,7 @@ export class SubProcessAgent implements AgentHandle {
     // 7. Handle process exit
     this.proc.on("close", (code, signal) => {
       if (buffer.trim()) this.processRpcEvent(buffer);
+      this.cancelCompletionTimer();
       this.cleanupTempFiles();
 
       if (this.status === "aborted") return;
@@ -313,6 +324,8 @@ export class SubProcessAgent implements AgentHandle {
 
     switch (event.type) {
       case "agent_start":
+        // Cancel pending completion — agent is continuing (retry/compaction triggered new loop)
+        this.cancelCompletionTimer();
         // agent:started already emitted above on first real event — no-op
         break;
 
@@ -422,11 +435,46 @@ export class SubProcessAgent implements AgentHandle {
           }
         }
 
-        // In RPC mode the process stays alive and can accept new prompts.
-        // Transition to "idle" so the agent can still receive messages.
-        // The manager will decide when to actually mark it completed.
+        // In RPC mode, agent_end does NOT mean the task is truly complete.
+        // The subprocess may trigger auto-retry (retryable errors) or
+        // auto-compaction (context overflow/threshold) AFTER emitting agent_end.
+        // These would start a new agent loop via agent.continue().
+        //
+        // Instead of emitting agent:completed immediately, start a short timer.
+        // If auto_retry_start, auto_compaction_start, or a new agent_start
+        // arrives before the timer fires, we cancel it — the agent is continuing.
+        // If the timer fires, the task is truly done.
         this.status = "idle";
-        this.emitAgentEvent("agent:completed", { output: this.lastOutput, usage: this.getUsage() });
+        this.startCompletionTimer();
+        break;
+      }
+
+      // ─── Auto-retry / Auto-compaction events ─────────────────────
+      // These arrive AFTER agent_end but BEFORE the new agent loop starts.
+      // They signal that the subprocess decided to continue working.
+
+      case "auto_retry_start": {
+        this.cancelCompletionTimer();
+        this.status = "working";
+        break;
+      }
+
+      case "auto_retry_end": {
+        // If retry failed (max retries exceeded), the subprocess won't start
+        // a new agent loop — let the next agent_end or process exit handle completion.
+        break;
+      }
+
+      case "auto_compaction_start": {
+        this.cancelCompletionTimer();
+        this.status = "working";
+        break;
+      }
+
+      case "auto_compaction_end": {
+        // After compaction, the subprocess may call agent.continue() (overflow retry)
+        // or not (threshold compaction without queued messages). Either way, a new
+        // agent_start or process exit will follow.
         break;
       }
     }
@@ -448,6 +496,7 @@ export class SubProcessAgent implements AgentHandle {
     }
 
     this.clearActivityTimeout();
+    this.cancelCompletionTimer();
     const wasIdle = this.status === "idle";
 
     if (wasIdle) {
@@ -514,7 +563,28 @@ export class SubProcessAgent implements AgentHandle {
 
   // ─── Internal Helpers ───────────────────────────────────────────
 
+  /**
+   * Start a delayed completion timer after agent_end.
+   * If no continuation signal (agent_start, auto_retry_start, auto_compaction_start)
+   * arrives within COMPLETION_DELAY_MS, emit agent:completed for real.
+   */
+  private startCompletionTimer(): void {
+    this.cancelCompletionTimer();
+    this.completionTimer = setTimeout(() => {
+      this.completionTimer = null;
+      // Only complete if still in a non-terminal state
+      if (this.status === "idle" || this.status === "working" || this.status === "thinking") {
+        this.emitAgentEvent("agent:completed", { output: this.lastOutput, usage: this.getUsage() });
+      }
+    }, SubProcessAgent.COMPLETION_DELAY_MS);
+  }
 
+  private cancelCompletionTimer(): void {
+    if (this.completionTimer) {
+      clearTimeout(this.completionTimer);
+      this.completionTimer = null;
+    }
+  }
 
   private sendRpc(cmd: object): void {
     if (!this.proc || this.proc.killed || !this.proc.stdin || this.proc.stdin.destroyed) {
@@ -624,6 +694,7 @@ export class SubProcessAgent implements AgentHandle {
    */
   async forceKill(): Promise<void> {
     this.clearActivityTimeout();
+    this.cancelCompletionTimer();
 
     if (this.proc && !this.proc.killed) {
       // Detach all event handlers BEFORE killing to prevent late events

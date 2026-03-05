@@ -76,6 +76,8 @@ export class AgentManager {
   private destroying = false;
   /** Maps agent ID → assigned task IDs (for cross-extension event emission) */
   private agentTaskIds = new Map<string, number[]>();
+  /** Tracks agents whose completion was already sent to the main agent (prevents double notification) */
+  private completionNotified = new Set<string>();
   /** Prompt registry instance for rendering awareness template */
   private promptRegistry: PromptRegistry | null = null;
 
@@ -338,6 +340,7 @@ export class AgentManager {
     this.messageCounts.clear();
     this.messageHistory = [];
     this.agentTaskIds.clear();
+    this.completionNotified.clear();
 
     // 4. Now kill processes (best-effort, errors ignored)
     const promises: Promise<void>[] = [];
@@ -638,6 +641,11 @@ export class AgentManager {
   // ─── Completion Handlers ────────────────────────────────────────
 
   private onAgentTaskDone(handle: AgentHandle, output: string): void {
+    // Prevent double notification — completion timer in subprocess-agent should
+    // already prevent this, but guard here as a safety net.
+    if (this.completionNotified.has(handle.id)) return;
+    this.completionNotified.add(handle.id);
+
     // Mark agent as completed so TUI can reflect the final state.
     handle.status = "completed";
     handle.completedAt = Date.now();
@@ -737,6 +745,7 @@ export class AgentManager {
       this.agentMessagingConfigs.delete(agentId);
       this.messageCounts.delete(agentId);
       this.agentTaskIds.delete(agentId);
+      this.completionNotified.delete(agentId);
       this.removalTimers.delete(agentId);
       // Detach event handler for this agent
       const tracked = this.agentEventHandlers.get(agentId);
