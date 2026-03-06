@@ -65,6 +65,8 @@ export class AgentManager {
   private mainThinkingLevel: ThinkingLevel = "off";
   private mainModel: any = undefined; // Model<any> from pi context
   private modelRegistry: any = null; // ModelRegistry from pi context
+  /** Per-type counter for generating unique instance names (worker-1, worker-2, etc.) */
+  private agentTypeCounters = new Map<string, number>();
 
   /** Messaging state: agent configs (id → MessagingConfig) */
   private agentMessagingConfigs = new Map<string, MessagingConfig>();
@@ -180,6 +182,16 @@ export class AgentManager {
   setMainModel(model: any): void { this.mainModel = model; }
   setModelRegistry(registry: any): void { this.modelRegistry = registry; }
 
+  /**
+   * Generate a unique instance name for an agent type.
+   * First agent of type "worker" → "worker-1", second → "worker-2", etc.
+   */
+  private generateUniqueName(baseName: string): string {
+    const count = (this.agentTypeCounters.get(baseName) || 0) + 1;
+    this.agentTypeCounters.set(baseName, count);
+    return `${baseName}-${count}`;
+  }
+
   // ─── Spawn ──────────────────────────────────────────────────────
 
   spawn(options: SpawnOptions): AgentHandle {
@@ -215,7 +227,8 @@ export class AgentManager {
       const color = assignColor(definition.color);
       agentColorHex = color.fg;
       const thinking = definition.thinking || this.mainThinkingLevel;
-      handle = new SubProcessAgent(id, effectiveDefinition, options.task, color.name, this.cwd, thinking, this.modelRegistry);
+      const uniqueName = this.generateUniqueName(definition.name);
+      handle = new SubProcessAgent(id, effectiveDefinition, options.task, color.name, this.cwd, thinking, this.modelRegistry, uniqueName);
 
       if (definition.hooks && Object.keys(definition.hooks).length > 0) {
         const engine = this.hookEngineFactory();
@@ -248,7 +261,9 @@ export class AgentManager {
         extraToolFactory = (agentHandle: AgentHandle) => [createMessageAgentTool(mgr, agentHandle)];
       }
 
-      handle = new InProcessAgent(id, options, color.name, this.cwd, extraToolFactory);
+      const baseName = options.name || "unnamed";
+      const uniqueName = this.generateUniqueName(baseName);
+      handle = new InProcessAgent(id, options, color.name, this.cwd, extraToolFactory, uniqueName);
 
       // Store messaging config
       if (options.messaging) {
@@ -341,6 +356,7 @@ export class AgentManager {
     this.messageHistory = [];
     this.agentTaskIds.clear();
     this.completionNotified.clear();
+    this.agentTypeCounters.clear();
 
     // 4. Now kill processes (best-effort, errors ignored)
     const promises: Promise<void>[] = [];
@@ -365,8 +381,12 @@ export class AgentManager {
   getAgent(idOrName: string): AgentHandle | undefined {
     const byId = this.agents.get(idOrName) || this.completedAgents.get(idOrName);
     if (byId) return byId;
+    // Match by instance name (e.g., "worker-1")
     for (const h of this.agents.values()) if (h.name === idOrName) return h;
     for (const h of this.completedAgents.values()) if (h.name === idOrName) return h;
+    // Fallback: match by base agent type (e.g., "worker") — returns first match
+    for (const h of this.agents.values()) if (h.agentType === idOrName) return h;
+    for (const h of this.completedAgents.values()) if (h.agentType === idOrName) return h;
     return undefined;
   }
 
@@ -436,16 +456,20 @@ export class AgentManager {
     const fromConfig = this.getMessagingConfig(fromId);
     const toConfig = this.getMessagingConfig(toId);
 
-    // Check sender's canSendTo
+    // Check sender's canSendTo (match by instance name or base agent type)
     const canSend = fromConfig.canSendTo === "*"
-      || (Array.isArray(fromConfig.canSendTo) && fromConfig.canSendTo.includes(toHandle.name));
+      || (Array.isArray(fromConfig.canSendTo) && (
+        fromConfig.canSendTo.includes(toHandle.name) || fromConfig.canSendTo.includes(toHandle.agentType)
+      ));
     if (!canSend) {
       return { allowed: false, reason: `Agent "${fromHandle.name}" is not permitted to send messages to "${toHandle.name}"` };
     }
 
-    // Check receiver's canReceiveFrom
+    // Check receiver's canReceiveFrom (match by instance name or base agent type)
     const canReceive = toConfig.canReceiveFrom === "*"
-      || (Array.isArray(toConfig.canReceiveFrom) && toConfig.canReceiveFrom.includes(fromHandle.name));
+      || (Array.isArray(toConfig.canReceiveFrom) && (
+        toConfig.canReceiveFrom.includes(fromHandle.name) || toConfig.canReceiveFrom.includes(fromHandle.agentType)
+      ));
     if (!canReceive) {
       return { allowed: false, reason: `Agent "${toHandle.name}" does not accept messages from "${fromHandle.name}"` };
     }

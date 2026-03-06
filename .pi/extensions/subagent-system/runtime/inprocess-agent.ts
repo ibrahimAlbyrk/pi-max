@@ -38,6 +38,7 @@ export class InProcessAgent implements AgentHandle {
   // Identity
   readonly id: string;
   readonly name: string;
+  readonly agentType: string;
   readonly description: string;
   readonly color: string;
   readonly runtimeMode: AgentRuntimeMode = "inprocess";
@@ -71,9 +72,12 @@ export class InProcessAgent implements AgentHandle {
     color: string,
     cwd: string,
     extraToolFactory?: ExtraToolFactory,
+    displayName?: string,
   ) {
     this.id = id;
-    this.name = options.name || "unnamed";
+    const baseName = options.name || "unnamed";
+    this.name = displayName || baseName;
+    this.agentType = baseName;
     this.description = options.description || options.task;
     this.color = color;
     this.task = options.task;

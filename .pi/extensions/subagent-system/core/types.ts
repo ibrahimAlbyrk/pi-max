@@ -141,6 +141,8 @@ export interface AgentHandle {
   // Identity
   readonly id: string;
   readonly name: string;
+  /** Base agent type name (e.g., "worker") — name may be "worker-1" but agentType stays "worker" */
+  readonly agentType: string;
   readonly description: string;
   readonly color: string;
   readonly runtimeMode: AgentRuntimeMode;

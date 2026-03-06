@@ -130,12 +130,11 @@ export default function (pi: ExtensionAPI) {
           taskIds: params.taskIds,
         });
 
-        const agentLabel = params.agent || params.name || "unnamed";
         const mode = params.agent ? 'predefined' : 'runtime';
         return {
           content: [{
             type: "text",
-            text: `Agent "${agentLabel}" spawned (${mode} mode).\n` +
+            text: `Agent "${handle.name}" spawned (${mode} mode).\n` +
                   `Runtime: ${handle.runtimeMode}.\n` +
                   `Results will be delivered by the system as a notification when the agent completes.`,
           }],

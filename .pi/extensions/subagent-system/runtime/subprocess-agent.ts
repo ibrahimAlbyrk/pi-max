@@ -34,6 +34,7 @@ export class SubProcessAgent implements AgentHandle {
   // Identity
   readonly id: string;
   readonly name: string;
+  readonly agentType: string;
   readonly description: string;
   readonly color: string;
   readonly runtimeMode: AgentRuntimeMode = "subprocess";
@@ -85,11 +86,13 @@ export class SubProcessAgent implements AgentHandle {
     cwd: string,
     thinkingLevel?: ThinkingLevel,
     modelRegistry?: any,
+    displayName?: string,
   ) {
     this.thinkingLevel = thinkingLevel;
     this.modelRegistry = modelRegistry || null;
     this.id = id;
-    this.name = definition.name;
+    this.name = displayName || definition.name;
+    this.agentType = definition.name;
     this.description = definition.description;
     this.color = color;
     this.task = task;
