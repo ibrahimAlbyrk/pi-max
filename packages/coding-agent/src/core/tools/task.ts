@@ -193,6 +193,14 @@ interface StoreEntry {
 
 const _storeMap = new Map<string, StoreEntry>();
 
+/** Callback invoked after any mutating tool action. Used by feature setup to refresh widget. */
+let _onStoreChanged: (() => void) | null = null;
+
+/** Register a callback to be notified when the tool mutates the store. */
+export function setOnStoreChanged(callback: (() => void) | null): void {
+	_onStoreChanged = callback;
+}
+
 function getStoreEntry(cwd: string): StoreEntry {
 	let entry = _storeMap.get(cwd);
 	if (!entry) {
@@ -546,6 +554,9 @@ function executeTaskAction(params: TaskToolInput, cwd: string): TaskToolResult {
 			// Bulk ops, delete, delete_group, bulk_create, import_text, etc.
 			storage.save(store);
 		}
+
+		// Notify feature setup to refresh widget
+		_onStoreChanged?.();
 	}
 
 	return result;
@@ -655,6 +666,16 @@ export function getTaskStore(cwd: string): TaskStore {
 /** Get the TaskStorage for a given cwd. Used by command registration module. */
 export function getTaskStorage(cwd: string): TaskStorage {
 	return getStoreEntry(cwd).storage;
+}
+
+/**
+ * Synchronize the tool's store entry with an externally-managed store and storage.
+ * Called by features/task/index.ts so that the feature setup and tool share
+ * the SAME in-memory store instance. Without this, mutations made by feature
+ * hooks (e.g., subagent:tasks-assigned) would not be visible to the tool/commands/widget.
+ */
+export function _syncToolStore(cwd: string, store: TaskStore, storage: TaskStorage): void {
+	_storeMap.set(cwd, { store, storage });
 }
 
 // ── Reset singleton (for testing) ───────────────────────────────────────────

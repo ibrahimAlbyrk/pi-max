@@ -17,6 +17,7 @@ import { registerSyncCommand } from "./commands/sync-command.js";
 import { registerTaskDetailCommand } from "./commands/task-detail-command.js";
 import { registerTaskHistoryCommand } from "./commands/task-history-command.js";
 import { registerTasksCommand, showTaskListOverlay } from "./commands/tasks-command.js";
+import { assignAgentToTask, clearAgentAssignment } from "./store.js";
 import type { SyncConfig, TaskStore } from "./types.js";
 import { createNextTasksComponent, updateNextTasksComponent } from "./widgets/next-tasks-widget.js";
 
@@ -185,5 +186,43 @@ export function registerTaskCommands(pi: ExtensionAPI): void {
 			const store = getStore();
 			updateNextTasksComponent(store, _widgetCollapsed);
 		},
+	});
+
+	// ── Bridge pi.events → task store (for subagent-system extension) ────
+
+	pi.events.on("subagent:tasks-assigned", (data: unknown) => {
+		const event = data as
+			| { taskIds?: number[]; agent?: { agentId?: string; agentName?: string; agentColor?: string } }
+			| null
+			| undefined;
+		if (!event?.taskIds || !event.agent) return;
+		const { agentId, agentName, agentColor } = event.agent;
+		if (!agentId || !agentName || !agentColor) return;
+
+		const store = getStore();
+		let changed = false;
+		for (const taskId of event.taskIds) {
+			if (assignAgentToTask(store, taskId, { agentId, agentName, agentColor })) {
+				changed = true;
+			}
+		}
+		if (changed) {
+			const storage = getTaskStorage(_activeCwd);
+			storage.save(store);
+			updateNextTasksComponent(store, _widgetCollapsed);
+		}
+	});
+
+	pi.events.on("subagent:tasks-unassigned", (data: unknown) => {
+		const event = data as { agentId?: string } | null | undefined;
+		if (!event?.agentId) return;
+
+		const store = getStore();
+		const cleared = clearAgentAssignment(store, event.agentId);
+		if (cleared.length > 0) {
+			const storage = getTaskStorage(_activeCwd);
+			storage.save(store);
+			updateNextTasksComponent(store, _widgetCollapsed);
+		}
 	});
 }

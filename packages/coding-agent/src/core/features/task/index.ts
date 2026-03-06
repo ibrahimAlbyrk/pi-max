@@ -10,6 +10,7 @@
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { CompactionEntry, ReadonlySessionManager } from "../../session-manager.js";
+import { _syncToolStore, setOnStoreChanged } from "../../tools/task.js";
 import { appendAutoNote } from "./automation/auto-notes.js";
 import { findBestTaskForFiles, findTaskByFileContext } from "./automation/file-correlator.js";
 import { detectTestResult } from "./automation/test-detector.js";
@@ -33,6 +34,7 @@ import {
 	type TaskStorage,
 	type TaskStore,
 } from "./types.js";
+import { updateNextTasksComponent } from "./widgets/next-tasks-widget.js";
 
 // ─── Session Interface ────────────────────────────────────────────────────────
 
@@ -213,6 +215,11 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 
 	const ctx = new TaskContextImpl(emitter);
 
+	/** Refresh the NextTasks widget with current store state. */
+	const refreshWidget = () => {
+		updateNextTasksComponent(ctx.store, ctx.widgetCollapsed);
+	};
+
 	// ── Session lifecycle ────────────────────────────────────────────────────
 
 	// session_start: load store from .pi/tasks/, initialize storage
@@ -221,6 +228,13 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 			ctx.storage = createStorage(sessionCtx.cwd);
 			ctx.store = ctx.storage.load();
 			ctx.saveToFile(); // Persist any migration changes immediately
+
+			// Sync the tool's store entry so feature hooks and tool/commands/widget
+			// share the SAME in-memory store instance.
+			_syncToolStore(sessionCtx.cwd, ctx.store, ctx.storage);
+
+			// Register widget refresh callback so tool mutations update the widget
+			setOnStoreChanged(refreshWidget);
 		} catch (err) {
 			console.error("[task] session_start failed:", err);
 			ctx.store = createDefaultStore();
@@ -247,6 +261,7 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 		if (ctx.storage) {
 			try {
 				ctx.store = ctx.storage.load();
+				_syncToolStore(ctx.storage.basePath.replace(/[\\/]\.pi[\\/]tasks$/, ""), ctx.store, ctx.storage);
 			} catch (err) {
 				console.error("[task] session_switch reload failed:", err);
 				ctx.store = createDefaultStore();
@@ -259,6 +274,7 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 		if (ctx.storage) {
 			try {
 				ctx.store = reconstructFromSession(session.sessionManager, ctx.storage);
+				_syncToolStore(ctx.storage.basePath.replace(/[\\/]\.pi[\\/]tasks$/, ""), ctx.store, ctx.storage);
 			} catch (err) {
 				console.error("[task] session_fork reconstruction failed:", err);
 				ctx.store = ctx.storage.load();
@@ -337,6 +353,7 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 							ctx.saveTaskFile(matchingTask.id);
 							ctx.taskEvents.autoStarted(matchingTask, filePath);
 							ctx.taskEvents.started(matchingTask);
+							refreshWidget();
 						}
 					}
 				}
@@ -380,6 +397,7 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 						activeTask.completedAt = new Date().toISOString();
 						ctx.saveTaskFile(activeTask.id);
 						ctx.taskEvents.statusChanged(activeTask, oldStatus, "done");
+						refreshWidget();
 					}
 				}
 			}
@@ -450,6 +468,7 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 			const task = findTask(ctx.store, taskId);
 			if (!task) return;
 			handleTaskCompletionHooks(emitter, ctx.store, task);
+			refreshWidget();
 		} catch (err) {
 			console.error("[task] task:completed hook failed:", err);
 		}
@@ -473,6 +492,7 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 			}
 			if (changed && ctx.storage) {
 				ctx.saveToFile();
+				refreshWidget();
 			}
 		} catch (err) {
 			console.error("[task] subagent:tasks-assigned handler failed:", err);
@@ -491,6 +511,7 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 				for (const taskId of cleared) {
 					ctx.saveTaskFile(taskId);
 				}
+				refreshWidget();
 			}
 		} catch (err) {
 			console.error("[task] subagent:tasks-unassigned handler failed:", err);
