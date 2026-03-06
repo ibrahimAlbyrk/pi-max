@@ -55,6 +55,9 @@ Available: read, bash. Be concise.`,
 	getAppendSystemPrompt: () => [],
 	getPathMetadata: () => new Map(),
 	extendResources: () => {},
+	getWatchPaths: () => [],
+	reloadSkills: () => {},
+	reloadPrompts: () => {},
 	reload: async () => {},
 };
 

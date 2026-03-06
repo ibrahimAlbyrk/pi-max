@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.js";
@@ -20,6 +20,7 @@ import type {
 import { DefaultPackageManager, type PathMetadata } from "./package-manager.js";
 import type { PromptTemplate } from "./prompt-templates.js";
 import { loadPromptTemplates } from "./prompt-templates.js";
+import type { WatchableResourceType, WatchPathConfig } from "./resource-watcher.js";
 import { SettingsManager } from "./settings-manager.js";
 import type { Skill } from "./skills.js";
 import { loadSkills } from "./skills.js";
@@ -41,6 +42,13 @@ export interface ResourceLoader {
 	getPathMetadata(): Map<string, PathMetadata>;
 	extendResources(paths: ResourceExtensionPaths): void;
 	reload(): Promise<void>;
+
+	/** Return directory watch configs for the given resource types. */
+	getWatchPaths(types: ReadonlyArray<WatchableResourceType>): WatchPathConfig[];
+	/** Re-read skills from the last resolved skill paths. */
+	reloadSkills(): void;
+	/** Re-read prompts from the last resolved prompt paths. */
+	reloadPrompts(): void;
 }
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
@@ -278,6 +286,100 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getPathMetadata(): Map<string, PathMetadata> {
 		return this.pathMetadata;
+	}
+
+	getWatchPaths(types: ReadonlyArray<WatchableResourceType>): WatchPathConfig[] {
+		const configs: WatchPathConfig[] = [];
+		const typeSet = new Set(types);
+
+		if (typeSet.has("skill")) {
+			for (const skillPath of this.lastSkillPaths) {
+				// Skill paths can be directories or individual files.
+				// For files, watch the parent directory.
+				if (existsSync(skillPath)) {
+					try {
+						const stats = statSync(skillPath);
+						if (stats.isDirectory()) {
+							configs.push({ path: skillPath, resourceType: "skill", recursive: true, extensionFilter: ".md" });
+						} else if (stats.isFile()) {
+							const dir = dirname(skillPath);
+							configs.push({ path: dir, resourceType: "skill", recursive: true, extensionFilter: ".md" });
+						}
+					} catch {
+						// Path gone between check and stat
+					}
+				}
+			}
+			// Also watch default skill directories (may not be in lastSkillPaths if includeDefaults was false)
+			const defaultSkillDirs = [join(this.agentDir, "skills"), join(this.cwd, CONFIG_DIR_NAME, "skills")];
+			for (const dir of defaultSkillDirs) {
+				if (existsSync(dir) && !configs.some((c) => c.path === dir && c.resourceType === "skill")) {
+					configs.push({ path: dir, resourceType: "skill", recursive: true, extensionFilter: ".md" });
+				}
+			}
+		}
+
+		if (typeSet.has("prompt")) {
+			for (const promptPath of this.lastPromptPaths) {
+				if (existsSync(promptPath)) {
+					try {
+						const stats = statSync(promptPath);
+						if (stats.isDirectory()) {
+							configs.push({
+								path: promptPath,
+								resourceType: "prompt",
+								recursive: true,
+								extensionFilter: ".md",
+							});
+						} else if (stats.isFile()) {
+							const dir = dirname(promptPath);
+							configs.push({ path: dir, resourceType: "prompt", recursive: true, extensionFilter: ".md" });
+						}
+					} catch {
+						// Path gone between check and stat
+					}
+				}
+			}
+			// Default prompt directories
+			const defaultPromptDirs = [join(this.agentDir, "prompts"), join(this.cwd, CONFIG_DIR_NAME, "prompts")];
+			for (const dir of defaultPromptDirs) {
+				if (existsSync(dir) && !configs.some((c) => c.path === dir && c.resourceType === "prompt")) {
+					configs.push({ path: dir, resourceType: "prompt", recursive: true, extensionFilter: ".md" });
+				}
+			}
+		}
+
+		// Future resource types can be added here with the same pattern:
+		// if (typeSet.has("theme")) { ... }
+		// if (typeSet.has("extension")) { ... }
+		// if (typeSet.has("context")) { ... }
+
+		// Dedupe by path+type
+		const seen = new Set<string>();
+		return configs.filter((c) => {
+			const key = `${c.resourceType}:${c.path}`;
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+	}
+
+	reloadSkills(): void {
+		// Re-discover skills: scan lastSkillPaths + default directories.
+		// lastSkillPaths may contain individual file paths (from package manager),
+		// so we also need to scan default directories to discover newly added files.
+		const defaultSkillDirs = [join(this.agentDir, "skills"), join(this.cwd, CONFIG_DIR_NAME, "skills")];
+		const allPaths = this.mergePaths(this.lastSkillPaths, defaultSkillDirs);
+		this.updateSkillsFromPaths(allPaths);
+	}
+
+	reloadPrompts(): void {
+		// Re-discover prompts: scan lastPromptPaths + default directories.
+		// lastPromptPaths may contain individual file paths (from package manager),
+		// so we also need to scan default directories to discover newly added files.
+		const defaultPromptDirs = [join(this.agentDir, "prompts"), join(this.cwd, CONFIG_DIR_NAME, "prompts")];
+		const allPaths = this.mergePaths(this.lastPromptPaths, defaultPromptDirs);
+		this.updatePromptsFromPaths(allPaths);
 	}
 
 	extendResources(paths: ResourceExtensionPaths): void {

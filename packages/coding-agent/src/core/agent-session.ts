@@ -990,6 +990,12 @@ export class AgentSession {
 		return this._resourceLoader.getPrompts().prompts;
 	}
 
+	/** Rebuild the system prompt from current resources and apply it to the agent. */
+	rebuildSystemPrompt(): void {
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.agent.state.tools as AgentTool[]);
+		this.agent.setSystemPrompt(this._baseSystemPrompt);
+	}
+
 	private _rebuildSystemPrompt(tools: AgentTool[]): string {
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();

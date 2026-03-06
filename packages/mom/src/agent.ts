@@ -317,6 +317,9 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 		getAppendSystemPrompt: () => [],
 		getPathMetadata: () => new Map(),
 		extendResources: () => {},
+		getWatchPaths: () => [],
+		reloadSkills: () => {},
+		reloadPrompts: () => {},
 		reload: async () => {},
 	};
 

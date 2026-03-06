@@ -54,6 +54,7 @@ import {
 } from "../../config.js";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
+import { createEventBus } from "../../core/event-bus.js";
 import type {
 	ExtensionContext,
 	ExtensionRunner,
@@ -69,6 +70,12 @@ import { type AppAction, KeybindingsManager } from "../../core/keybindings.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
 import { resolveModelScope } from "../../core/model-resolver.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
+import {
+	RESOURCE_CHANGED_CHANNEL,
+	type ResourceChangeEvent,
+	ResourceWatcher,
+	type WatchableResourceType,
+} from "../../core/resource-watcher.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
@@ -266,6 +273,11 @@ export class InteractiveMode {
 	// Splash screen layout (shown on fresh sessions)
 	private splashLayout: SplashLayout | undefined = undefined;
 
+	// Resource file watcher for hot-reload of skills and prompts
+	private resourceWatcher: ResourceWatcher | undefined = undefined;
+	private resourceWatcherUnsubscribe?: () => void;
+	private pendingResourceReloads = new Set<WatchableResourceType>();
+
 	// Convenience accessors
 	private get agent() {
 		return this.session.agent;
@@ -314,6 +326,80 @@ export class InteractiveMode {
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		initTheme(this.settingsManager.getTheme(), true);
 	}
+
+	// ── Resource Watcher ────────────────────────────────────────────────────
+
+	private setupResourceWatcher(): void {
+		if (!this.settingsManager.getWatchEnabled()) return;
+
+		const debounceMs = this.settingsManager.getWatchDebounceMs();
+		const watchedTypes = this.settingsManager.getWatchResourceTypes() as WatchableResourceType[];
+
+		// Dedicated event bus for resource watcher — keeps it decoupled from session event bus
+		const watcherEventBus = createEventBus();
+		this.resourceWatcher = new ResourceWatcher(watcherEventBus, debounceMs);
+
+		const watchPaths = this.session.resourceLoader.getWatchPaths(watchedTypes);
+		this.resourceWatcher.watch(watchPaths);
+
+		this.resourceWatcherUnsubscribe = watcherEventBus.on(RESOURCE_CHANGED_CHANNEL, (data: unknown) => {
+			const event = data as ResourceChangeEvent;
+			this.handleResourceChange(event);
+		});
+	}
+
+	private handleResourceChange(event: ResourceChangeEvent): void {
+		// Queue changes during streaming or compaction — flush after completion
+		if (this.session.isStreaming || this.session.isCompacting) {
+			this.pendingResourceReloads.add(event.type);
+			return;
+		}
+
+		this.applyResourceChange(event.type);
+	}
+
+	private applyResourceChange(type: WatchableResourceType): void {
+		switch (type) {
+			case "skill": {
+				const oldSkills = this.session.resourceLoader.getSkills().skills;
+				this.session.resourceLoader.reloadSkills();
+				const newSkills = this.session.resourceLoader.getSkills().skills;
+
+				this.setupAutocomplete(this.fdPath);
+
+				// Only rebuild system prompt if skill metadata changed (add/remove/rename/description)
+				if (skillMetadataChanged(oldSkills, newSkills)) {
+					this.session.rebuildSystemPrompt();
+				}
+
+				this.showStatus(`Skills updated (${newSkills.length} loaded)`);
+				break;
+			}
+
+			case "prompt": {
+				this.session.resourceLoader.reloadPrompts();
+				this.setupAutocomplete(this.fdPath);
+				this.showStatus(`Prompts updated (${this.session.resourceLoader.getPrompts().prompts.length} loaded)`);
+				break;
+			}
+
+			// Future resource types can be added here:
+			// case "theme": { ... break; }
+			// case "extension": { ... break; }
+			// case "context": { ... break; }
+		}
+	}
+
+	private flushPendingResourceReloads(): void {
+		if (this.pendingResourceReloads.size === 0) return;
+
+		for (const type of this.pendingResourceReloads) {
+			this.applyResourceChange(type);
+		}
+		this.pendingResourceReloads.clear();
+	}
+
+	// ── Autocomplete ────────────────────────────────────────────────────────
 
 	private setupAutocomplete(fdPath: string | undefined): void {
 		// Define commands for autocomplete
@@ -537,6 +623,9 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 			this.ui.requestRender();
 		});
+
+		// Set up resource file watcher for hot-reload of skills and prompts
+		this.setupResourceWatcher();
 
 		// Set up git branch watcher (uses provider instead of footer)
 		this.footerDataProvider.onBranchChange(() => {
@@ -2747,6 +2836,9 @@ export class InteractiveMode {
 				}
 				this.pendingTools.clear();
 
+				// Flush any resource changes that arrived during streaming
+				this.flushPendingResourceReloads();
+
 				await this.checkShutdownRequested();
 
 				this.ui.requestRender();
@@ -2806,6 +2898,8 @@ export class InteractiveMode {
 					this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
 				}
 				void this.flushCompactionQueue({ willRetry: event.willRetry });
+				// Flush any resource changes that arrived during compaction
+				this.flushPendingResourceReloads();
 				this.ui.requestRender();
 				break;
 			}
@@ -4376,6 +4470,12 @@ export class InteractiveMode {
 			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 			this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 			this.setupAutocomplete(this.fdPath);
+			// Reconcile watched paths (reload may have discovered new resource directories)
+			if (this.resourceWatcher) {
+				const watchedTypes = this.settingsManager.getWatchResourceTypes() as WatchableResourceType[];
+				const newWatchPaths = this.session.resourceLoader.getWatchPaths(watchedTypes);
+				this.resourceWatcher.reconcile(newWatchPaths);
+			}
 			const runner = this.session.extensionRunner;
 			if (runner) {
 				this.setupExtensionShortcuts(runner);
@@ -4978,6 +5078,14 @@ export class InteractiveMode {
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
+		if (this.resourceWatcher) {
+			this.resourceWatcher.dispose();
+			this.resourceWatcher = undefined;
+		}
+		if (this.resourceWatcherUnsubscribe) {
+			this.resourceWatcherUnsubscribe();
+			this.resourceWatcherUnsubscribe = undefined;
+		}
 		if (this.unsubscribe) {
 			this.unsubscribe();
 		}
@@ -4986,4 +5094,19 @@ export class InteractiveMode {
 			this.isInitialized = false;
 		}
 	}
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Compare skill lists by metadata (name + description). Returns true if they differ. */
+function skillMetadataChanged(
+	oldSkills: ReadonlyArray<{ name: string; description: string }>,
+	newSkills: ReadonlyArray<{ name: string; description: string }>,
+): boolean {
+	if (oldSkills.length !== newSkills.length) return true;
+	const oldMap = new Map(oldSkills.map((s) => [s.name, s.description]));
+	for (const s of newSkills) {
+		if (oldMap.get(s.name) !== s.description) return true;
+	}
+	return false;
 }

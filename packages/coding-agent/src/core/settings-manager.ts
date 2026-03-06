@@ -42,6 +42,12 @@ export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
 }
 
+export interface WatchSettings {
+	enabled?: boolean; // default: true — master toggle for file watching
+	debounceMs?: number; // default: 300 — debounce interval in milliseconds
+	resourceTypes?: string[]; // default: ["skill", "prompt"] — which resource types to watch
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -91,6 +97,7 @@ export interface Settings {
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
+	watch?: WatchSettings;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -892,5 +899,17 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getWatchEnabled(): boolean {
+		return this.settings.watch?.enabled ?? true;
+	}
+
+	getWatchDebounceMs(): number {
+		return this.settings.watch?.debounceMs ?? 300;
+	}
+
+	getWatchResourceTypes(): string[] {
+		return this.settings.watch?.resourceTypes ?? ["skill", "prompt"];
 	}
 }
