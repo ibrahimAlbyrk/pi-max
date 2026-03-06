@@ -506,15 +506,25 @@ export class Editor implements Component, Focusable {
 			const indicator = `─── ↓ ${linesBelow} more `;
 			const indicatorWidth = visibleWidth(indicator);
 			if (badgeSuffixWidth > 0) {
-				const fillWidth = Math.max(0, width - indicatorWidth - badgeSuffixWidth - 1);
-				result.push(`${this.borderColor(`${indicator}${"─".repeat(fillWidth)}`)} ${badgeSuffix}`);
+				// indicator ────│ badge │──
+				const trailingWidth = 2;
+				const bracketCost = 4; // "│ " + " │"
+				const fillWidth = Math.max(0, width - indicatorWidth - badgeSuffixWidth - bracketCost - trailingWidth);
+				result.push(
+					`${this.borderColor(`${indicator}${"─".repeat(fillWidth)}│`)} ${badgeSuffix} ${this.borderColor(`│${"─".repeat(trailingWidth)}`)}`,
+				);
 			} else {
 				const remaining = width - indicatorWidth;
 				result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
 			}
 		} else if (badgeSuffixWidth > 0) {
-			const fillWidth = Math.max(0, width - badgeSuffixWidth - 1);
-			result.push(`${this.borderColor("─".repeat(fillWidth))} ${badgeSuffix}`);
+			// ────│ badge │──
+			const trailingWidth = 2;
+			const bracketCost = 4; // "│ " + " │"
+			const fillWidth = Math.max(0, width - badgeSuffixWidth - bracketCost - trailingWidth);
+			result.push(
+				`${this.borderColor(`${"─".repeat(fillWidth)}│`)} ${badgeSuffix} ${this.borderColor(`│${"─".repeat(trailingWidth)}`)}`,
+			);
 		} else {
 			result.push(horizontal.repeat(width));
 		}
