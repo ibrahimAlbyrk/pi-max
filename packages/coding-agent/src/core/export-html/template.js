@@ -575,12 +575,15 @@
             const cmd = rawCmd.replace(/[\n\t]/g, ' ').trim().slice(0, 50);
             return `[bash: ${cmd}${rawCmd.length > 50 ? '...' : ''}]`;
           }
-          case 'grep':
-            return `[grep: /${args.pattern || ''}/ in ${shortenPath(String(args.path || '.'))}]`;
-          case 'find':
-            return `[find: ${args.pattern || ''} in ${shortenPath(String(args.path || '.'))}]`;
-          case 'ls':
-            return `[ls: ${shortenPath(String(args.path || '.'))}]`;
+          case 'search': {
+            if (args.content) return `[search: content "${args.content}"${args.path ? ` in ${shortenPath(String(args.path))}` : ''}]`;
+            if (args.query) return `[search: "${args.query}"]`;
+            return `[search: browse ${shortenPath(String(args.path || '.'))}]`;
+          }
+          case 'webfetch':
+            return `[webfetch: ${String(args.url || '')}]`;
+          case 'websearch':
+            return `[websearch: "${String(args.query || '')}"]`;
           default: {
             const argsStr = JSON.stringify(args).slice(0, 40);
             return `[${name}: ${argsStr}${JSON.stringify(args).length > 40 ? '...' : ''}]`;
