@@ -87,7 +87,7 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 			result.appendSystemPrompt = args[++i];
 		} else if (arg === "--no-session") {
 			result.noSession = true;
-		} else if (arg === "--session" && i + 1 < args.length) {
+		} else if ((arg === "--session" || arg === "-s") && i + 1 < args.length) {
 			result.session = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
@@ -200,7 +200,7 @@ ${chalk.bold("Options:")}
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
-  --session <path>               Use specific session file
+  --session, -s <path>           Use specific session file or ID
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
