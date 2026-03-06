@@ -106,6 +106,20 @@ class TaskListOverlay {
 			return;
 		}
 
+		// Mouse scroll: SGR format \x1b[<button;col;rowM
+		const mouseMatch = data.match(/^\x1b\[<(\d+);\d+;\d+[Mm]$/);
+		if (mouseMatch) {
+			const button = parseInt(mouseMatch[1], 10) & ~(4 | 8 | 16);
+			if (button === 64 && this.selectedIndex > 0) {
+				this.selectedIndex--;
+				this.invalidate();
+			} else if (button === 65 && this.selectedIndex < this.entries.length - 1) {
+				this.selectedIndex++;
+				this.invalidate();
+			}
+			return;
+		}
+
 		if (matchesKey(data, "up")) {
 			if (this.selectedIndex > 0) {
 				this.selectedIndex--;

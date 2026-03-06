@@ -169,6 +169,28 @@ export class KanbanBoard {
 			return;
 		}
 
+		// Mouse scroll: SGR format \x1b[<button;col;rowM
+		const mouseMatch = data.match(/^\x1b\[<(\d+);\d+;\d+[Mm]$/);
+		if (mouseMatch) {
+			const button = parseInt(mouseMatch[1], 10) & ~(4 | 8 | 16);
+			if (button === 64) {
+				if (this.activeRow > 0) {
+					this.activeRow--;
+					if (this.activeRow < this.scrollOffset) {
+						this.scrollOffset = this.activeRow;
+					}
+					this.invalidate();
+				}
+			} else if (button === 65) {
+				const col = cols[this.activeCol];
+				if (col && this.activeRow < col.tasks.length - 1) {
+					this.activeRow++;
+					this.invalidate();
+				}
+			}
+			return;
+		}
+
 		// ── Shift+Left/Right = MOVE task to adjacent column ──
 		if (matchesKey(data, "shift+left")) {
 			this.moveSelectedTask("left", cols);

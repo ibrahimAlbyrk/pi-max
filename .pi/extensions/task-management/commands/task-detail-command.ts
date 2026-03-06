@@ -36,6 +36,21 @@ class TaskDetailOverlay {
 			this.onDone("back");
 			return;
 		}
+
+		// Mouse scroll: SGR format \x1b[<button;col;rowM
+		const mouseMatch = data.match(/^\x1b\[<(\d+);\d+;\d+[Mm]$/);
+		if (mouseMatch) {
+			const button = parseInt(mouseMatch[1], 10) & ~(4 | 8 | 16);
+			if (button === 64 && this.scrollOffset > 0) {
+				this.scrollOffset--;
+				this.invalidate();
+			} else if (button === 65) {
+				this.scrollOffset++;
+				this.invalidate();
+			}
+			return;
+		}
+
 		if (matchesKey(data, "up")) {
 			if (this.scrollOffset > 0) {
 				this.scrollOffset--;

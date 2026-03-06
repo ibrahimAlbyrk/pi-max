@@ -642,8 +642,16 @@ export class TUI extends Container {
 		// Strip modifier bits (Shift=bit2, Meta=bit3, Ctrl=bit4) to get base button
 		const button = rawButton & ~(4 | 8 | 16);
 
-		// Scroll wheel events: route to scrollable region
+		// Scroll wheel events: route to focused overlay or scrollable region
 		if (button === 64 || button === 65) {
+			// If an overlay is focused, forward scroll events to it
+			const topOverlay = this.getTopmostVisibleOverlay();
+			if (topOverlay?.component.handleInput) {
+				topOverlay.component.handleInput(data);
+				this.requestRender();
+				return true;
+			}
+
 			// Scroll clears selection and hover
 			if (this.selectionManager.hasSelection()) {
 				this.selectionManager.clear();
