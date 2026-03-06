@@ -745,14 +745,14 @@ export async function main(args: string[]) {
 	if (mode === "rpc") {
 		await runRpcMode(session);
 	} else if (isInteractive) {
-		if (scopedModels.length > 0 && (parsed.verbose || !settingsManager.getQuietStartup())) {
+		if (scopedModels.length > 0 && parsed.verbose) {
 			const modelList = scopedModels
 				.map((sm) => {
 					const thinkingStr = sm.thinkingLevel ? `:${sm.thinkingLevel}` : "";
 					return `${sm.model.id}${thinkingStr}`;
 				})
 				.join(", ");
-			console.log(chalk.dim(`Model scope: ${modelList} ${chalk.gray("(Ctrl+P to cycle)")}`));
+			console.log(chalk.dim(`Model scope: ${modelList}`));
 		}
 
 		printTimings();

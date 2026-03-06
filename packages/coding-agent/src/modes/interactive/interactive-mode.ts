@@ -42,6 +42,7 @@ import {
 	TUI,
 	visibleWidth,
 } from "@mariozechner/pi-tui";
+import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
@@ -1980,6 +1981,13 @@ export class InteractiveMode {
 			fullscreen?: boolean;
 		},
 	): Promise<T> {
+		// Transition out of splash screen before showing non-overlay custom components.
+		// The splash layout uses CenteredContainer + VerticallyCenteredContainer which
+		// can cause rendering artifacts when the editor is replaced with a tall component.
+		if (this.splashLayout?.isActive() && !options?.overlay) {
+			this.splashLayout.instantTransition();
+		}
+
 		const savedText = this.editor.getText();
 		const isOverlay = options?.overlay ?? false;
 		const isFullscreen = options?.fullscreen ?? false;
@@ -3024,7 +3032,40 @@ export class InteractiveMode {
 		await this.ui.terminal.drainInput(1000);
 
 		this.stop();
+		this.printExitMessage();
 		process.exit(0);
+	}
+
+	/**
+	 * Print session info after TUI stops, before process exits.
+	 * Shows the π logo (dimmed) and session continuation info.
+	 */
+	private printExitMessage(): void {
+		const stats = this.session.getSessionStats();
+		const sessionId = stats.sessionId;
+
+		// π logo — same as splash screen, rendered dim
+		const logoLines = [
+			" ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ ",
+			" ░░░░▓█░░░░░░░▓█░░░░ ",
+			"     ▒█       ▒█     ",
+			"     ▓█       ▓█     ",
+			"     █▓       █▓     ",
+			"    ▓██▓     ▓██▓    ",
+		];
+
+		console.log();
+		for (const line of logoLines) {
+			console.log(chalk.dim(line));
+		}
+		console.log();
+
+		// Session info — labels dim, values slightly brighter
+		const labelWidth = 10;
+		const label = (l: string) => chalk.dim(l.padEnd(labelWidth));
+		console.log(`${label("Session")}${chalk.gray(sessionId)}`);
+		console.log(`${label("Continue")}${chalk.white(`pi -s ${sessionId}`)}`);
+		console.log();
 	}
 
 	/**
