@@ -104,7 +104,7 @@ export const lspReferencesDefinition: ToolDefinition<typeof lspReferencesSchema,
 		const line = args?.line as number | undefined;
 		const char = args?.character as number | undefined;
 		const pos = line !== undefined && char !== undefined ? `:${line}:${char}` : "";
-		return new Text(theme.fg("toolTitle", theme.bold("lsp_references ")) + theme.fg("accent", `${path}${pos}`), 0, 0);
+		return new Text(theme.fg("toolTitle", theme.bold("LSP References ")) + theme.fg("accent", `${path}${pos}`), 0, 0);
 	},
 
 	renderResult(result, { expanded }, theme) {

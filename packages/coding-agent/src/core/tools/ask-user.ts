@@ -164,7 +164,7 @@ export const askUserTool: ToolDefinition<typeof AskUserSchema, AskUserDetails> =
 		const qs = (args.questions as QuestionInput[]) || [];
 		if (qs.length === 0) return undefined;
 
-		let text = theme.fg("toolTitle", theme.bold("ask_user "));
+		let text = theme.fg("toolTitle", theme.bold("Ask User "));
 		if (qs.length === 1) {
 			text += theme.fg("muted", qs[0].prompt);
 		} else {

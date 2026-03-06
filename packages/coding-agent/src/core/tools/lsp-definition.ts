@@ -98,7 +98,7 @@ export const lspDefinitionDefinition: ToolDefinition<typeof lspDefinitionSchema,
 		const line = args?.line as number | undefined;
 		const char = args?.character as number | undefined;
 		const pos = line !== undefined && char !== undefined ? `:${line}:${char}` : "";
-		return new Text(theme.fg("toolTitle", theme.bold("lsp_definition ")) + theme.fg("accent", `${path}${pos}`), 0, 0);
+		return new Text(theme.fg("toolTitle", theme.bold("LSP Definition ")) + theme.fg("accent", `${path}${pos}`), 0, 0);
 	},
 
 	renderResult(result, { expanded }, theme) {

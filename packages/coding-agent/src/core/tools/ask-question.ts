@@ -208,7 +208,7 @@ export const askQuestionTool: ToolDefinition<typeof AskQuestionParams, AskQuesti
 		const count = qs.length;
 		const labels = qs.map((q) => q.label || q.id).join(", ");
 
-		let text = theme.fg("toolTitle", theme.bold("ask_user_question "));
+		let text = theme.fg("toolTitle", theme.bold("Ask User "));
 		if (count === 1) {
 			text += theme.fg("muted", qs[0].prompt);
 		} else {

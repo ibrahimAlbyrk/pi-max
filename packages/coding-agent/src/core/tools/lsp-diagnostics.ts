@@ -131,7 +131,7 @@ export const lspDiagnosticsDefinition: ToolDefinition<typeof lspDiagnosticsSchem
 
 	renderCall(args, _options, theme) {
 		const path = (args?.path as string | undefined) ?? "workspace";
-		return new Text(theme.fg("toolTitle", theme.bold("lsp_diagnostics ")) + theme.fg("accent", path), 0, 0);
+		return new Text(theme.fg("toolTitle", theme.bold("LSP Diagnostics ")) + theme.fg("accent", path), 0, 0);
 	},
 
 	renderResult(result, { expanded }, theme) {

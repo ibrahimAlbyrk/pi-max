@@ -423,12 +423,14 @@ export class ToolExecutionComponent extends Container {
 					}
 				} catch {
 					// Fall back to default on error
-					this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+					const displayName = this.toolDefinition?.label ?? this.toolName;
+					this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(displayName)), 0, 0));
 					customRendererHasContent = true;
 				}
 			} else {
-				// No custom renderCall, show tool name
-				this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+				// No custom renderCall, show tool label (or tool name as fallback)
+				const displayName = this.toolDefinition?.label ?? this.toolName;
+				this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(displayName)), 0, 0));
 				customRendererHasContent = true;
 			}
 
@@ -648,7 +650,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay = theme.fg("toolOutput", "...");
 			}
 
-			text = `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}`;
+			text = `${theme.fg("toolTitle", theme.bold("Read"))} ${pathDisplay}`;
 
 			if (this.result) {
 				const output = this.getTextOutput();
@@ -710,7 +712,7 @@ export class ToolExecutionComponent extends Container {
 				writePathDisplay = theme.fg("toolOutput", "...");
 			}
 
-			text = `${theme.fg("toolTitle", theme.bold("write"))} ${writePathDisplay}`;
+			text = `${theme.fg("toolTitle", theme.bold("Write"))} ${writePathDisplay}`;
 
 			if (fileContent === null) {
 				text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
@@ -782,7 +784,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay = theme.fg("toolOutput", "...");
 			}
 
-			text = `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
+			text = `${theme.fg("toolTitle", theme.bold("Edit"))} ${pathDisplay}`;
 
 			if (this.result?.isError) {
 				// Show error from result
@@ -803,159 +805,9 @@ export class ToolExecutionComponent extends Container {
 					text += `\n\n${renderDiff(this.editDiffPreview.diff, { filePath: rawPath ?? undefined })}`;
 				}
 			}
-		} else if (this.toolName === "ls") {
-			const rawPath = str(this.args?.path);
-			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
-			const limit = this.args?.limit;
-
-			let lsPathDisplay: string;
-			if (path === null) {
-				lsPathDisplay = invalidArg;
-			} else {
-				const absPath = resolveAbsolutePath(rawPath || ".", this.cwd);
-				lsPathDisplay = theme.fg("accent", fileHyperlink(path, absPath));
-			}
-			text = `${theme.fg("toolTitle", theme.bold("ls"))} ${lsPathDisplay}`;
-			if (limit !== undefined) {
-				text += theme.fg("toolOutput", ` (limit ${limit})`);
-			}
-
-			if (this.result) {
-				const output = this.getTextOutput().trim();
-				if (output) {
-					const lines = output.split("\n");
-					const maxLines = this.expanded ? lines.length : 20;
-					const displayLines = lines.slice(0, maxLines);
-					const remaining = lines.length - maxLines;
-
-					text += `\n\n${displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n")}`;
-					if (remaining > 0) {
-						text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")})`;
-					}
-				}
-
-				const entryLimit = this.result.details?.entryLimitReached;
-				const truncation = this.result.details?.truncation;
-				if (entryLimit || truncation?.truncated) {
-					const warnings: string[] = [];
-					if (entryLimit) {
-						warnings.push(`${entryLimit} entries limit`);
-					}
-					if (truncation?.truncated) {
-						warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
-					}
-					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
-				}
-			}
-		} else if (this.toolName === "find") {
-			const pattern = str(this.args?.pattern);
-			const rawPath = str(this.args?.path);
-			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
-			const limit = this.args?.limit;
-
-			let findPathDisplay: string;
-			if (path === null) {
-				findPathDisplay = invalidArg;
-			} else {
-				const absPath = resolveAbsolutePath(rawPath || ".", this.cwd);
-				findPathDisplay = fileHyperlink(path, absPath);
-			}
-			text =
-				theme.fg("toolTitle", theme.bold("find")) +
-				" " +
-				(pattern === null ? invalidArg : theme.fg("accent", pattern || "")) +
-				theme.fg("toolOutput", ` in ${findPathDisplay}`);
-			if (limit !== undefined) {
-				text += theme.fg("toolOutput", ` (limit ${limit})`);
-			}
-
-			if (this.result) {
-				const output = this.getTextOutput().trim();
-				if (output) {
-					const lines = output.split("\n");
-					const maxLines = this.expanded ? lines.length : 20;
-					const displayLines = lines.slice(0, maxLines);
-					const remaining = lines.length - maxLines;
-
-					text += `\n\n${displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n")}`;
-					if (remaining > 0) {
-						text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")})`;
-					}
-				}
-
-				const resultLimit = this.result.details?.resultLimitReached;
-				const truncation = this.result.details?.truncation;
-				if (resultLimit || truncation?.truncated) {
-					const warnings: string[] = [];
-					if (resultLimit) {
-						warnings.push(`${resultLimit} results limit`);
-					}
-					if (truncation?.truncated) {
-						warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
-					}
-					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
-				}
-			}
-		} else if (this.toolName === "grep") {
-			const pattern = str(this.args?.pattern);
-			const rawPath = str(this.args?.path);
-			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
-			const glob = str(this.args?.glob);
-			const limit = this.args?.limit;
-
-			let grepPathDisplay: string;
-			if (path === null) {
-				grepPathDisplay = invalidArg;
-			} else {
-				const absPath = resolveAbsolutePath(rawPath || ".", this.cwd);
-				grepPathDisplay = fileHyperlink(path, absPath);
-			}
-			text =
-				theme.fg("toolTitle", theme.bold("grep")) +
-				" " +
-				(pattern === null ? invalidArg : theme.fg("accent", `/${pattern || ""}/`)) +
-				theme.fg("toolOutput", ` in ${grepPathDisplay}`);
-			if (glob) {
-				text += theme.fg("toolOutput", ` (${glob})`);
-			}
-			if (limit !== undefined) {
-				text += theme.fg("toolOutput", ` limit ${limit}`);
-			}
-
-			if (this.result) {
-				const output = this.getTextOutput().trim();
-				if (output) {
-					const lines = output.split("\n");
-					const maxLines = this.expanded ? lines.length : 15;
-					const displayLines = lines.slice(0, maxLines);
-					const remaining = lines.length - maxLines;
-
-					text += `\n\n${displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n")}`;
-					if (remaining > 0) {
-						text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")})`;
-					}
-				}
-
-				const matchLimit = this.result.details?.matchLimitReached;
-				const truncation = this.result.details?.truncation;
-				const linesTruncated = this.result.details?.linesTruncated;
-				if (matchLimit || truncation?.truncated || linesTruncated) {
-					const warnings: string[] = [];
-					if (matchLimit) {
-						warnings.push(`${matchLimit} matches limit`);
-					}
-					if (truncation?.truncated) {
-						warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
-					}
-					if (linesTruncated) {
-						warnings.push("some lines truncated");
-					}
-					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
-				}
-			}
 		} else if (this.toolName === "search") {
 			// Header — mimic old tree_search extension style
-			text = `${theme.fg("toolTitle", theme.bold("search"))} `;
+			text = `${theme.fg("toolTitle", theme.bold("Search"))} `;
 
 			if (this.args?.content) {
 				text += theme.fg("warning", "content ");
@@ -1091,7 +943,7 @@ export class ToolExecutionComponent extends Container {
 				urlDisplay = invalidArg;
 			}
 
-			text = `${theme.fg("toolTitle", theme.bold("webfetch"))} ${urlDisplay}`;
+			text = `${theme.fg("toolTitle", theme.bold("Web Fetch"))} ${urlDisplay}`;
 
 			if (this.result) {
 				const details = this.result.details as
@@ -1137,7 +989,7 @@ export class ToolExecutionComponent extends Container {
 			const query = str(this.args?.query);
 			const site = str(this.args?.site);
 
-			text = `${theme.fg("toolTitle", theme.bold("websearch"))} ${query === null ? invalidArg : theme.fg("accent", `"${query}"`)}`;
+			text = `${theme.fg("toolTitle", theme.bold("Web Search"))} ${query === null ? invalidArg : theme.fg("accent", `"${query}"`)}`;
 			if (site) {
 				text += theme.fg("toolOutput", ` site:${site}`);
 			}
@@ -1167,7 +1019,8 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else {
 			// Generic tool (shouldn't reach here for custom tools)
-			text = theme.fg("toolTitle", theme.bold(this.toolName));
+			const displayName = this.toolDefinition?.label ?? this.toolName;
+			text = theme.fg("toolTitle", theme.bold(displayName));
 
 			const content = JSON.stringify(this.args, null, 2);
 			text += `\n\n${content}`;

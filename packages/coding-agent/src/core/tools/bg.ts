@@ -246,7 +246,7 @@ export const bgToolDefinition: ToolDefinition<typeof bgSchema, BgToolDetails> = 
 		const action = (args?.action as string | undefined) ?? "?";
 		const name = (args?.name as string | undefined) ?? (args?.command as string | undefined) ?? "";
 		const label = `${action}${name ? ` ${name}` : ""}`;
-		return new Text(theme.fg("toolTitle", theme.bold("bg ")) + theme.fg("accent", label), 0, 0);
+		return new Text(theme.fg("toolTitle", theme.bold("Background Process ")) + theme.fg("accent", label), 0, 0);
 	},
 
 	renderResult(result, { expanded }, theme) {
