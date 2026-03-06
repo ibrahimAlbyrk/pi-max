@@ -240,7 +240,7 @@ export class SelectionManager {
 			}
 		}
 
-		return lines.join("\n");
+		return lines.map((l) => l.trimEnd()).join("\n");
 	}
 
 	/** Normalize anchor/head to start (earlier) / end (later). */
