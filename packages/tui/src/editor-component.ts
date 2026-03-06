@@ -71,6 +71,9 @@ export interface EditorComponent extends Component {
 	/** Set the autocomplete provider */
 	setAutocompleteProvider?(provider: AutocompleteProvider): void;
 
+	/** Set a dim placeholder hint shown after a slash command when no arguments are typed */
+	setArgumentHint?(hint: string | null): void;
+
 	// =========================================================================
 	// Appearance (optional)
 	// =========================================================================

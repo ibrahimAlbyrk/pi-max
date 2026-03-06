@@ -157,6 +157,8 @@ export interface SlashCommand {
 	/** If true, this command can be invoked at any position in the input (e.g., skills, prompts).
 	 * Non-invocable commands (built-ins like /export) only work at the start of input. */
 	inlineInvocable?: boolean;
+	/** Hint text shown as dim placeholder in the editor when the command is entered but no arguments are typed yet */
+	argumentHint?: string;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): AutocompleteItem[] | null;

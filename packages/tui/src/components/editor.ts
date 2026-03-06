@@ -212,6 +212,9 @@ export class Editor implements Component, Focusable {
 	// Undo support
 	private undoStack = new UndoStack<EditorState>();
 
+	// Argument hint (dim placeholder text shown after slash command when no args typed)
+	private argumentHint: string | null = null;
+
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
 	public disableSubmit: boolean = false;
@@ -286,6 +289,49 @@ export class Editor implements Component, Focusable {
 
 	setAutocompleteProvider(provider: AutocompleteProvider): void {
 		this.autocompleteProvider = provider;
+	}
+
+	/**
+	 * Set a dim placeholder hint shown after a slash command when no arguments are typed.
+	 * Pass null to clear the hint.
+	 */
+	setArgumentHint(hint: string | null): void {
+		this.argumentHint = hint;
+	}
+
+	/**
+	 * Check if the argument hint should be shown.
+	 * Only shows when: single line, starts with "/command ", no arguments typed yet,
+	 * and autocomplete is not active.
+	 */
+	private shouldShowArgumentHint(): boolean {
+		if (this.autocompleteState) return false;
+		if (this.state.lines.length > 1) return false;
+		const text = this.state.lines[0] || "";
+		if (!text.startsWith("/")) return false;
+
+		const spaceIdx = text.indexOf(" ");
+		if (spaceIdx === -1) return false; // no space yet — autocomplete is likely showing
+
+		const afterCommand = text.slice(spaceIdx + 1);
+		return afterCommand.trim().length === 0; // only whitespace after command
+	}
+
+	/**
+	 * Truncate text to fit within a given visible width.
+	 */
+	private truncateToWidth(text: string, maxWidth: number): string {
+		if (maxWidth <= 0) return "";
+		let width = 0;
+		const graphemes = [...segmenter.segment(text)];
+		let result = "";
+		for (const g of graphemes) {
+			const gWidth = visibleWidth(g.segment);
+			if (width + gWidth > maxWidth) break;
+			result += g.segment;
+			width += gWidth;
+		}
+		return result;
 	}
 
 	/**
@@ -476,6 +522,19 @@ export class Editor implements Component, Focusable {
 					if (lineVisibleWidth > contentWidth && paddingX > 0) {
 						cursorInPadding = true;
 					}
+				}
+			}
+
+			// Append argument hint as dim text after cursor (render-only, does not affect text state)
+			if (this.argumentHint && layoutLine.hasCursor && this.shouldShowArgumentHint()) {
+				const availableForHint = contentWidth - lineVisibleWidth;
+				if (availableForHint > 0) {
+					const hintText =
+						visibleWidth(this.argumentHint) <= availableForHint
+							? this.argumentHint
+							: this.truncateToWidth(this.argumentHint, availableForHint);
+					displayText += `\x1b[2m${hintText}\x1b[22m`;
+					lineVisibleWidth += visibleWidth(hintText);
 				}
 			}
 

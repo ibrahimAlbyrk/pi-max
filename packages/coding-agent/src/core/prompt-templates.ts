@@ -13,6 +13,7 @@ export interface PromptTemplate {
 	content: string;
 	source: string; // "user", "project", or "path"
 	filePath: string; // Absolute path to the template file
+	argumentHint?: string; // Hint text shown as dim placeholder when no arguments are entered
 }
 
 /**
@@ -107,12 +108,12 @@ function loadTemplateFromFile(
 ): PromptTemplate | null {
 	try {
 		const rawContent = readFileSync(filePath, "utf-8");
-		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(rawContent);
+		const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(rawContent);
 
 		const name = nameOverride ?? basename(filePath).replace(/\.md$/, "");
 
 		// Get description from frontmatter or first non-empty line
-		let description = frontmatter.description || "";
+		let description = String(frontmatter.description || "");
 		if (!description) {
 			const firstLine = body.split("\n").find((line) => line.trim());
 			if (firstLine) {
@@ -125,12 +126,17 @@ function loadTemplateFromFile(
 		// Append source to description
 		description = description ? `${description} ${sourceLabel}` : sourceLabel;
 
+		const rawHint = frontmatter["argument-hint"];
+		const argumentHint =
+			typeof rawHint === "string" ? rawHint : Array.isArray(rawHint) ? rawHint.join(", ") : undefined;
+
 		return {
 			name,
 			description,
 			content: body,
 			source,
 			filePath,
+			...(argumentHint && { argumentHint }),
 		};
 	} catch {
 		return null;

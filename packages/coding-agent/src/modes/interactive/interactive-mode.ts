@@ -166,6 +166,8 @@ export class InteractiveMode {
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
 	private autocompleteProvider: CombinedAutocompleteProvider | undefined;
+	/** Map of slash command names to their argument hints (e.g., "review" → "<file or pattern>") */
+	private argumentHints: Map<string, string> = new Map();
 	private fdPath: string | undefined;
 	private editorContainer: Container;
 	private footerContainer: Container;
@@ -356,6 +358,7 @@ export class InteractiveMode {
 			name: cmd.name.replace(/\//g, ":"),
 			description: cmd.description,
 			inlineInvocable: true,
+			...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
 		}));
 
 		// Convert extension commands to SlashCommand format
@@ -376,6 +379,14 @@ export class InteractiveMode {
 				const commandName = `skill:${skill.name}`;
 				this.skillCommands.set(commandName, skill.filePath);
 				skillCommandList.push({ name: commandName, description: skill.description, inlineInvocable: true });
+			}
+		}
+
+		// Build argument hint lookup from all commands that have hints
+		this.argumentHints.clear();
+		for (const cmd of [...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList]) {
+			if ("argumentHint" in cmd && cmd.argumentHint) {
+				this.argumentHints.set(cmd.name, cmd.argumentHint);
 			}
 		}
 
@@ -2257,12 +2268,44 @@ export class InteractiveMode {
 			if (wasBashMode !== this.isBashMode) {
 				this.updateEditorBorderColor();
 			}
+			this.updateArgumentHint(text);
 		};
 
 		// Handle clipboard image paste (triggered on Ctrl+V)
 		this.defaultEditor.onPasteImage = () => {
 			this.handleClipboardImagePaste();
 		};
+	}
+
+	/**
+	 * Update the editor's argument hint based on current text.
+	 * Shows dim placeholder text when a slash command is entered but no arguments typed yet.
+	 */
+	private updateArgumentHint(text: string): void {
+		if (!text.startsWith("/")) {
+			this.defaultEditor.setArgumentHint(null);
+			return;
+		}
+
+		// Extract command name (text between "/" and first space)
+		const spaceIdx = text.indexOf(" ");
+		if (spaceIdx === -1) {
+			// No space yet — user is still typing the command name
+			this.defaultEditor.setArgumentHint(null);
+			return;
+		}
+
+		const commandName = text.slice(1, spaceIdx);
+		const afterCommand = text.slice(spaceIdx + 1).trim();
+
+		if (afterCommand.length > 0) {
+			// User has started typing arguments
+			this.defaultEditor.setArgumentHint(null);
+			return;
+		}
+
+		const hint = this.argumentHints.get(commandName);
+		this.defaultEditor.setArgumentHint(hint ?? null);
 	}
 
 	private async handleClipboardImagePaste(): Promise<void> {
