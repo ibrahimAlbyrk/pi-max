@@ -339,13 +339,13 @@ export const ALL_CONFIGS: Record<string, LanguageConfig> = {
 };
 
 // ---------------------------------------------------------------------------
-// File extension to language key mapping
+// File extension → language key mapping (built once at module load)
 // ---------------------------------------------------------------------------
 
 const EXT_TO_LANG: Record<string, string> = {};
 for (const [key, config] of Object.entries(ALL_CONFIGS)) {
 	for (const ext of config.detect.extensions) {
-		// First config wins for shared extensions (e.g., .js -> javascript, not typescript)
+		// First config wins for shared extensions
 		if (!EXT_TO_LANG[ext]) {
 			EXT_TO_LANG[ext] = key;
 		}
@@ -354,7 +354,9 @@ for (const [key, config] of Object.entries(ALL_CONFIGS)) {
 
 /** Get the language config key for a file path based on its extension. */
 export function getLanguageKeyForFile(filePath: string): string | undefined {
-	const ext = "." + (filePath.split(".").pop() || "");
+	const dot = filePath.lastIndexOf(".");
+	if (dot === -1) return undefined;
+	const ext = filePath.slice(dot);
 	return EXT_TO_LANG[ext];
 }
 

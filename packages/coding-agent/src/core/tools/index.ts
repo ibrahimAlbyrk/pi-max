@@ -72,6 +72,9 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type BashToolOptions, bashTool, createBashTool } from "./bash.js";
 import { createBgTool } from "./bg.js";
 import { createEditTool, editTool } from "./edit.js";
+import { createLspDefinitionTool } from "./lsp-definition.js";
+import { createLspDiagnosticsTool } from "./lsp-diagnostics.js";
+import { createLspReferencesTool } from "./lsp-references.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
 import { createSearchTool, searchTool } from "./search.js";
 import { createWebfetchTool } from "./webfetch.js";
@@ -97,6 +100,9 @@ const _toolRegistry = {
 	webfetch: (_cwd: string) => createWebfetchTool(),
 	websearch: (_cwd: string) => createWebsearchTool(),
 	bg: (cwd: string) => createBgTool(cwd),
+	lsp_diagnostics: (cwd: string) => createLspDiagnosticsTool(cwd),
+	lsp_definition: (cwd: string) => createLspDefinitionTool(cwd),
+	lsp_references: (cwd: string) => createLspReferencesTool(cwd),
 };
 
 export type ToolName = keyof typeof _toolRegistry;
@@ -165,5 +171,8 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		webfetch: createWebfetchTool(),
 		websearch: createWebsearchTool(),
 		bg: createBgTool(cwd),
+		lsp_diagnostics: createLspDiagnosticsTool(cwd),
+		lsp_definition: createLspDefinitionTool(cwd),
+		lsp_references: createLspReferencesTool(cwd),
 	};
 }

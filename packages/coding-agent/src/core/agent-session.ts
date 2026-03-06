@@ -71,6 +71,8 @@ import {
 } from "./extensions/index.js";
 import { registerBgCommands } from "./features/bg/commands.js";
 import { setupBgFeature } from "./features/bg/index.js";
+import { registerLspCommands } from "./features/lsp/commands.js";
+import { setupLspFeature } from "./features/lsp/index.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
@@ -84,6 +86,9 @@ import { askUserTool } from "./tools/ask-user.js";
 import type { BashOperations } from "./tools/bash.js";
 import { bgToolDefinition } from "./tools/bg.js";
 import { createAllTools } from "./tools/index.js";
+import { lspDefinitionDefinition } from "./tools/lsp-definition.js";
+import { lspDiagnosticsDefinition } from "./tools/lsp-diagnostics.js";
+import { lspReferencesDefinition } from "./tools/lsp-references.js";
 
 // ============================================================================
 // Skill Block Parsing
@@ -270,6 +275,9 @@ export class AgentSession {
 
 	// Built-in feature hooks
 	private _builtinShutdownHandlers: Array<() => Promise<void>> = [];
+	private _builtinSessionStartHandlers: Array<(ctx: { cwd: string }) => Promise<void>> = [];
+	private _builtinToolResultHandlers: Array<(event: { toolName: string; input: unknown }) => Promise<void>> = [];
+	private _pendingToolArgs: Map<string, unknown> = new Map();
 	private _featureEventHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
 
 	// Model registry for API key resolution
@@ -291,6 +299,9 @@ export class AgentSession {
 			...(config.customTools ?? []),
 			askUserTool as unknown as ToolDefinition,
 			bgToolDefinition as unknown as ToolDefinition,
+			lspDiagnosticsDefinition as unknown as ToolDefinition,
+			lspDefinitionDefinition as unknown as ToolDefinition,
+			lspReferencesDefinition as unknown as ToolDefinition,
 		];
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
@@ -308,6 +319,7 @@ export class AgentSession {
 		});
 
 		setupBgFeature(this);
+		setupLspFeature(this);
 	}
 
 	/** Model registry for API key resolution and model discovery */
@@ -403,6 +415,17 @@ export class AgentSession {
 
 		// Notify all listeners
 		this._emit(event);
+
+		// Track tool args (start) and fire onToolResult handlers (end)
+		if (event.type === "tool_execution_start") {
+			this._pendingToolArgs.set(event.toolCallId, event.args);
+		} else if (event.type === "tool_execution_end") {
+			const input = this._pendingToolArgs.get(event.toolCallId);
+			this._pendingToolArgs.delete(event.toolCallId);
+			for (const handler of this._builtinToolResultHandlers) {
+				await handler({ toolName: event.toolName, input });
+			}
+		}
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -591,6 +614,24 @@ export class AgentSession {
 	 */
 	onSessionShutdown(handler: () => Promise<void>): void {
 		this._builtinShutdownHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler to be called when a session starts.
+	 * Called on initial bindExtensions(), newSession(), and reload().
+	 * Used by built-in features (e.g., LSP manager) to initialize per-session resources.
+	 */
+	onSessionStart(handler: (ctx: { cwd: string }) => Promise<void>): void {
+		this._builtinSessionStartHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler to be called after each tool execution completes.
+	 * Receives the tool name and the input arguments passed to the tool.
+	 * Used by built-in features (e.g., LSP manager) to react to file edits.
+	 */
+	onToolResult(handler: (event: { toolName: string; input: unknown }) => Promise<void>): void {
+		this._builtinToolResultHandlers.push(handler);
 	}
 
 	/**
@@ -1325,6 +1366,9 @@ export class AgentSession {
 
 		// Emit session_start so extensions can reinitialize for the new session
 		await this._extensionRunner?.emit({ type: "session_start" });
+		for (const handler of this._builtinSessionStartHandlers) {
+			await handler({ cwd: this._cwd });
+		}
 
 		// Emit session_switch event with reason "new" to extensions
 		if (this._extensionRunner) {
@@ -1951,6 +1995,9 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "session_start" });
 			await this.extendResourcesFromExtensions("startup");
 		}
+		for (const handler of this._builtinSessionStartHandlers) {
+			await handler({ cwd: this._cwd });
+		}
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
@@ -2169,6 +2216,8 @@ export class AgentSession {
 			this._applyExtensionBindings(this._extensionRunner);
 			// Register built-in /bg command and shift+down shortcut via the extension system.
 			this._extensionRunner.registerBuiltinExtension("<builtin-bg>", registerBgCommands);
+			// Register built-in /lsp-setup and /lsp-status commands.
+			this._extensionRunner.registerBuiltinExtension("<builtin-lsp>", registerLspCommands);
 		}
 
 		const registeredTools = this._extensionRunner?.getAllRegisteredTools() ?? [];
@@ -2241,6 +2290,9 @@ export class AgentSession {
 		if (this._extensionRunner && hasBindings) {
 			await this._extensionRunner.emit({ type: "session_start" });
 			await this.extendResourcesFromExtensions("reload");
+		}
+		for (const handler of this._builtinSessionStartHandlers) {
+			await handler({ cwd: this._cwd });
 		}
 	}
 

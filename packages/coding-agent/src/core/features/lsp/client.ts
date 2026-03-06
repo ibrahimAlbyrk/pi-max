@@ -1,52 +1,59 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
 	createProtocolConnection,
+	DefinitionRequest,
+	type Diagnostic,
+	DidChangeTextDocumentNotification,
+	DidOpenTextDocumentNotification,
+	InitializeRequest,
+	type ProtocolConnection,
+	PublishDiagnosticsNotification,
+	ReferencesRequest,
 	StreamMessageReader,
 	StreamMessageWriter,
-	InitializeRequest,
-	DidOpenTextDocumentNotification,
-	DidChangeTextDocumentNotification,
-	DidCloseTextDocumentNotification,
-	PublishDiagnosticsNotification,
-	DefinitionRequest,
-	ReferencesRequest,
-	type ProtocolConnection,
-	type Diagnostic,
 } from "vscode-languageserver-protocol/node.js";
 import type { LanguageConfig } from "./language-configs.js";
 
 export interface Location {
 	file: string;
-	line: number;
-	character: number;
+	line: number; // 0-indexed (internal), converted to 1-indexed in tool output
+	character: number; // 0-indexed (internal), converted to 1-indexed in tool output
 }
 
 export interface DiagnosticEntry {
-	line: number;
-	character: number;
-	severity: number;
+	line: number; // 0-indexed
+	character: number; // 0-indexed
+	severity: number; // 1=Error, 2=Warning, 3=Information, 4=Hint
 	message: string;
 }
 
 /**
  * Wraps a single LSP server process and its protocol connection.
+ *
+ * All line/character values are 0-indexed (LSP protocol native). Conversion
+ * to 1-indexed happens in the tool layer, not here.
  */
 export class LspClient {
 	private process: ChildProcess | null = null;
 	private connection: ProtocolConnection | null = null;
-	private diagnosticsMap = new Map<string, Diagnostic[]>();
-	private openDocuments = new Map<string, number>(); // uri -> version
-	private initialized = false;
+	private diagnosticsMap: Map<string, Diagnostic[]> = new Map();
+	private openDocuments: Map<string, number> = new Map(); // uri → version
+	private initialized: boolean = false;
 	private initPromise: Promise<void> | null = null;
 
 	constructor(
 		private config: LanguageConfig,
-		private cwd: string
+		private cwd: string,
 	) {}
 
-	/** Start the language server and initialize the LSP connection. */
+	// --- Lifecycle ---
+
+	/**
+	 * Start the language server and initialize the LSP connection.
+	 * Idempotent: returns the existing initPromise if already starting/started.
+	 */
 	async start(): Promise<void> {
 		if (this.initPromise) return this.initPromise;
 		this.initPromise = this._start();
@@ -60,32 +67,30 @@ export class LspClient {
 			env: { ...process.env },
 		});
 
-		// Handle unexpected exit
 		this.process.on("exit", (code, signal) => {
 			if (this.initialized) {
-				console.error(`[lsp-tools] ${this.config.server.name} exited: code=${code}, signal=${signal}`);
+				console.error(`[lsp] ${this.config.server.name} exited unexpectedly: code=${code}, signal=${signal}`);
 			}
 			this.initialized = false;
 			this.connection = null;
 		});
 
 		this.process.on("error", (err) => {
-			console.error(`[lsp-tools] ${this.config.server.name} error: ${err.message}`);
+			console.error(`[lsp] ${this.config.server.name} process error: ${err.message}`);
 		});
 
 		this.connection = createProtocolConnection(
 			new StreamMessageReader(this.process.stdout!),
-			new StreamMessageWriter(this.process.stdin!)
+			new StreamMessageWriter(this.process.stdin!),
 		);
 
-		// Collect diagnostics pushed by the server
+		// Register PublishDiagnosticsNotification handler → update diagnosticsMap
 		this.connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
 			this.diagnosticsMap.set(params.uri, params.diagnostics);
 		});
 
 		this.connection.listen();
 
-		// Initialize handshake
 		await this.connection.sendRequest(InitializeRequest.type, {
 			processId: process.pid,
 			rootUri: `file://${this.cwd}`,
@@ -110,7 +115,9 @@ export class LspClient {
 		this.initialized = true;
 	}
 
-	/** Graceful shutdown. */
+	/**
+	 * Graceful shutdown: send shutdown/exit, wait up to 3s, then SIGKILL.
+	 */
 	async stop(): Promise<void> {
 		this.initialized = false;
 
@@ -126,17 +133,15 @@ export class LspClient {
 		}
 
 		if (this.process) {
-			// Wait for process to exit (with timeout)
-			await new Promise<void>((resolve) => {
+			await new Promise<void>((res) => {
 				const timeout = setTimeout(() => {
 					this.process?.kill("SIGKILL");
-					resolve();
+					res();
 				}, 3000);
 				this.process!.on("exit", () => {
 					clearTimeout(timeout);
-					resolve();
+					res();
 				});
-				// In case exit notification didn't work
 				this.process!.kill();
 			});
 			this.process = null;
@@ -147,18 +152,19 @@ export class LspClient {
 		this.openDocuments.clear();
 	}
 
-	/** Whether the server is initialized and ready. */
+	/** Returns true when the server is initialized and the connection is live. */
 	isReady(): boolean {
 		return this.initialized && this.connection !== null;
 	}
 
-	// -----------------------------------------------------------------------
-	// Document synchronization
-	// -----------------------------------------------------------------------
+	// --- Document Sync ---
 
-	/** Notify the server about a file change (open or update). */
+	/**
+	 * Notify the server that a file has changed (open or update).
+	 * If not initialized, returns immediately.
+	 */
 	async notifyFileChanged(filePath: string): Promise<void> {
-		if (!this.connection || !this.initialized) return;
+		if (!this.initialized || !this.connection) return;
 
 		const fullPath = resolve(filePath);
 		const uri = `file://${fullPath}`;
@@ -167,19 +173,17 @@ export class LspClient {
 		try {
 			content = await readFile(fullPath, "utf-8");
 		} catch {
-			return; // File may have been deleted
+			return; // File may have been deleted — silently skip
 		}
 
 		if (this.openDocuments.has(uri)) {
-			// Already open -- send change
-			const version = (this.openDocuments.get(uri) || 0) + 1;
+			const version = (this.openDocuments.get(uri) ?? 0) + 1;
 			this.openDocuments.set(uri, version);
 			this.connection.sendNotification(DidChangeTextDocumentNotification.type, {
 				textDocument: { uri, version },
 				contentChanges: [{ text: content }],
 			});
 		} else {
-			// First time -- open
 			this.openDocuments.set(uri, 1);
 			this.connection.sendNotification(DidOpenTextDocumentNotification.type, {
 				textDocument: {
@@ -192,7 +196,10 @@ export class LspClient {
 		}
 	}
 
-	/** Ensure a file is open in the server. */
+	/**
+	 * Ensure a file is open in the server.
+	 * Calls notifyFileChanged() if the file is not already tracked.
+	 */
 	async ensureOpen(filePath: string): Promise<void> {
 		const fullPath = resolve(filePath);
 		const uri = `file://${fullPath}`;
@@ -201,11 +208,11 @@ export class LspClient {
 		}
 	}
 
-	// -----------------------------------------------------------------------
-	// Diagnostics
-	// -----------------------------------------------------------------------
+	// --- Queries ---
 
-	/** Get diagnostics for a specific file. */
+	/**
+	 * Get diagnostics for a specific file. Returns 0-indexed line/character.
+	 */
 	getDiagnosticsForFile(filePath: string): DiagnosticEntry[] {
 		const fullPath = resolve(filePath);
 		const uri = `file://${fullPath}`;
@@ -219,24 +226,26 @@ export class LspClient {
 		}));
 	}
 
-	/** Get all diagnostics across all open files. Returns formatted strings. */
+	/**
+	 * Get all diagnostics across all tracked files.
+	 * Returns formatted strings: "{file}:{line+1}:{char+1} [{severity}] {message}"
+	 */
 	getAllDiagnostics(): string[] {
 		const lines: string[] = [];
 		for (const [uri, diags] of this.diagnosticsMap) {
 			const file = uriToPath(uri);
 			for (const d of diags) {
-				const sev = d.severity === 1 ? "error" : d.severity === 2 ? "warning" : "info";
+				const sev = d.severity === 1 ? "error" : d.severity === 2 ? "warning" : d.severity === 3 ? "info" : "hint";
 				lines.push(`${file}:${d.range.start.line + 1}:${d.range.start.character + 1} [${sev}] ${d.message}`);
 			}
 		}
 		return lines;
 	}
 
-	// -----------------------------------------------------------------------
-	// Go to Definition
-	// -----------------------------------------------------------------------
-
-	/** Get definition locations for a symbol at the given position. */
+	/**
+	 * Get definition locations for a symbol at the given 0-indexed position.
+	 * Returns Location[] with 0-indexed line/character.
+	 */
 	async getDefinition(filePath: string, line: number, character: number): Promise<Location[]> {
 		if (!this.connection || !this.initialized) return [];
 
@@ -250,9 +259,10 @@ export class LspClient {
 		if (!result) return [];
 
 		const items = Array.isArray(result) ? result : [result];
-		return items.map((item: any) => {
-			const uri = item.uri || item.targetUri;
-			const range = item.range || item.targetSelectionRange;
+		return items.map((item) => {
+			// Handle both Location and LocationLink shapes
+			const uri: string = "targetUri" in item ? item.targetUri : item.uri;
+			const range = "targetSelectionRange" in item ? item.targetSelectionRange : item.range;
 			return {
 				file: uriToPath(uri),
 				line: range.start.line,
@@ -261,16 +271,15 @@ export class LspClient {
 		});
 	}
 
-	// -----------------------------------------------------------------------
-	// Find References
-	// -----------------------------------------------------------------------
-
-	/** Find all references to a symbol at the given position. */
+	/**
+	 * Find all references to a symbol at the given 0-indexed position.
+	 * Returns Location[] with 0-indexed line/character.
+	 */
 	async getReferences(
 		filePath: string,
 		line: number,
 		character: number,
-		includeDeclaration: boolean
+		includeDeclaration: boolean,
 	): Promise<Location[]> {
 		if (!this.connection || !this.initialized) return [];
 
@@ -291,12 +300,14 @@ export class LspClient {
 		}));
 	}
 
-	/** Server display name. */
+	// --- Accessors ---
+
+	/** Server display name (e.g., "typescript-language-server"). */
 	get serverName(): string {
 		return this.config.server.name;
 	}
 
-	/** Language key (e.g., "csharp", "typescript"). */
+	/** LSP language identifier (e.g., "typescript"). */
 	get languageId(): string {
 		return this.config.languageId;
 	}
