@@ -69,6 +69,8 @@ import {
 	wrapRegisteredTools,
 	wrapToolsWithExtensions,
 } from "./extensions/index.js";
+import { registerBgCommands } from "./features/bg/commands.js";
+import { setupBgFeature } from "./features/bg/index.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
@@ -80,6 +82,7 @@ import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocatio
 import { buildSystemPrompt } from "./system-prompt.js";
 import { askUserTool } from "./tools/ask-user.js";
 import type { BashOperations } from "./tools/bash.js";
+import { bgToolDefinition } from "./tools/bg.js";
 import { createAllTools } from "./tools/index.js";
 
 // ============================================================================
@@ -265,6 +268,10 @@ export class AgentSession {
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
 
+	// Built-in feature hooks
+	private _builtinShutdownHandlers: Array<() => Promise<void>> = [];
+	private _featureEventHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
+
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
 
@@ -280,7 +287,11 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
-		this._customTools = [...(config.customTools ?? []), askUserTool as unknown as ToolDefinition];
+		this._customTools = [
+			...(config.customTools ?? []),
+			askUserTool as unknown as ToolDefinition,
+			bgToolDefinition as unknown as ToolDefinition,
+		];
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
@@ -295,6 +306,8 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
+
+		setupBgFeature(this);
 	}
 
 	/** Model registry for API key resolution and model discovery */
@@ -569,6 +582,45 @@ export class AgentSession {
 				this._eventListeners.splice(index, 1);
 			}
 		};
+	}
+
+	/**
+	 * Register a handler to be called when the session shuts down.
+	 * Used by built-in features (e.g., background process manager) to clean up
+	 * resources before the session is torn down or reloaded.
+	 */
+	onSessionShutdown(handler: () => Promise<void>): void {
+		this._builtinShutdownHandlers.push(handler);
+	}
+
+	/**
+	 * Subscribe to an internal session event.
+	 * Used by built-in features for inter-feature communication (e.g., task:completed).
+	 * Returns an unsubscribe function.
+	 */
+	onEvent(event: string, handler: (data: unknown) => void): () => void {
+		let handlers = this._featureEventHandlers.get(event);
+		if (!handlers) {
+			handlers = new Set();
+			this._featureEventHandlers.set(event, handlers);
+		}
+		handlers.add(handler);
+		return () => {
+			this._featureEventHandlers.get(event)?.delete(handler);
+		};
+	}
+
+	/**
+	 * Emit an internal session event to all registered handlers.
+	 * Used to notify built-in features of session lifecycle events.
+	 */
+	emitEvent(event: string, data: unknown): void {
+		const handlers = this._featureEventHandlers.get(event);
+		if (handlers) {
+			for (const handler of handlers) {
+				handler(data);
+			}
+		}
 	}
 
 	/**
@@ -1245,6 +1297,9 @@ export class AgentSession {
 		}
 
 		// Emit session_shutdown so extensions can clean up (e.g., subagents)
+		for (const handler of this._builtinShutdownHandlers) {
+			await handler();
+		}
 		await this._extensionRunner?.emit({ type: "session_shutdown" });
 
 		this._disconnectFromAgent();
@@ -2112,6 +2167,8 @@ export class AgentSession {
 		if (this._extensionRunner) {
 			this._bindExtensionCore(this._extensionRunner);
 			this._applyExtensionBindings(this._extensionRunner);
+			// Register built-in /bg command and shift+down shortcut via the extension system.
+			this._extensionRunner.registerBuiltinExtension("<builtin-bg>", registerBgCommands);
 		}
 
 		const registeredTools = this._extensionRunner?.getAllRegisteredTools() ?? [];
@@ -2163,6 +2220,9 @@ export class AgentSession {
 
 	async reload(): Promise<void> {
 		const previousFlagValues = this._extensionRunner?.getFlagValues();
+		for (const handler of this._builtinShutdownHandlers) {
+			await handler();
+		}
 		await this._extensionRunner?.emit({ type: "session_shutdown" });
 		this.settingsManager.reload();
 		resetApiProviders();

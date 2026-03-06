@@ -10,6 +10,12 @@ export {
 	createBashTool,
 } from "./bash.js";
 export {
+	type BgToolDetails,
+	type BgToolInput,
+	bgToolDefinition,
+	createBgTool,
+} from "./bg.js";
+export {
 	createEditTool,
 	type EditOperations,
 	type EditToolDetails,
@@ -64,6 +70,7 @@ export {
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type BashToolOptions, bashTool, createBashTool } from "./bash.js";
+import { createBgTool } from "./bg.js";
 import { createEditTool, editTool } from "./edit.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
 import { createSearchTool, searchTool } from "./search.js";
@@ -89,6 +96,7 @@ const _toolRegistry = {
 	search: (cwd: string) => createSearchTool(cwd),
 	webfetch: (_cwd: string) => createWebfetchTool(),
 	websearch: (_cwd: string) => createWebsearchTool(),
+	bg: (cwd: string) => createBgTool(cwd),
 };
 
 export type ToolName = keyof typeof _toolRegistry;
@@ -156,5 +164,6 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		search: createSearchTool(cwd),
 		webfetch: createWebfetchTool(),
 		websearch: createWebsearchTool(),
+		bg: createBgTool(cwd),
 	};
 }

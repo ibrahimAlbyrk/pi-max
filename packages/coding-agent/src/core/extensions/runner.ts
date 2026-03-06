@@ -7,6 +7,7 @@ import type { ImageContent, Model } from "@mariozechner/pi-ai";
 import type { KeyId } from "@mariozechner/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "../diagnostics.js";
+import { createEventBus } from "../event-bus.js";
 import type { KeyAction, KeybindingsConfig } from "../keybindings.js";
 import type { ModelRegistry } from "../model-registry.js";
 import type { SessionManager } from "../session-manager.js";
@@ -19,6 +20,7 @@ import type {
 	ContextUsage,
 	Extension,
 	ExtensionActions,
+	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionCommandContextActions,
 	ExtensionContext,
@@ -399,6 +401,86 @@ export class ExtensionRunner {
 
 	getShortcutDiagnostics(): ResourceDiagnostic[] {
 		return this.shortcutDiagnostics;
+	}
+
+	/**
+	 * Register a built-in feature extension using a synchronous factory function.
+	 *
+	 * Creates a new Extension object, builds a functional ExtensionAPI wrapper
+	 * (registerCommand and registerShortcut write to the extension; other methods
+	 * delegate to the shared runtime or are no-ops), calls the factory, and pushes
+	 * the extension into the runner's list so its commands/shortcuts are discoverable.
+	 *
+	 * Must be called after bindCore() so that runtime action stubs are replaced.
+	 */
+	registerBuiltinExtension(path: string, factory: (pi: ExtensionAPI) => void): void {
+		const ext: Extension = {
+			path,
+			resolvedPath: path,
+			handlers: new Map(),
+			tools: new Map(),
+			messageRenderers: new Map(),
+			commands: new Map(),
+			flags: new Map(),
+			shortcuts: new Map(),
+		};
+
+		const runtime = this.runtime;
+
+		// Build a minimal ExtensionAPI. Only registerCommand and registerShortcut
+		// are functionally important for built-in features. Everything else either
+		// delegates to the already-bound runtime or is a safe no-op.
+		const api = {
+			// ── Registration (write to the extension object) ────────────────
+			on(event: string, handler: unknown): void {
+				const list: unknown[] = ext.handlers.get(event) ?? [];
+				list.push(handler);
+				ext.handlers.set(event, list as unknown as ReturnType<(typeof ext.handlers)["get"]> & []);
+			},
+			registerTool(tool: { name: string; [k: string]: unknown }): void {
+				ext.tools.set(tool.name, {
+					definition: tool as unknown as RegisteredTool["definition"],
+					extensionPath: ext.path,
+				});
+			},
+			registerCommand(name: string, options: Omit<RegisteredCommand, "name">): void {
+				ext.commands.set(name, { name, ...options });
+			},
+			registerShortcut(
+				shortcut: KeyId,
+				options: { description?: string; handler: (ctx: ExtensionContext) => Promise<void> | void },
+			): void {
+				ext.shortcuts.set(shortcut, { shortcut, extensionPath: ext.path, ...options });
+			},
+			registerFlag(): void {},
+			registerMessageRenderer(): void {},
+			getFlag(): undefined {
+				return undefined;
+			},
+			// ── Action methods (delegate to the bound runtime) ──────────────
+			sendMessage: runtime.sendMessage.bind(runtime),
+			sendUserMessage: runtime.sendUserMessage.bind(runtime),
+			appendEntry: runtime.appendEntry.bind(runtime),
+			setSessionName: runtime.setSessionName.bind(runtime),
+			getSessionName: runtime.getSessionName.bind(runtime),
+			setLabel: runtime.setLabel.bind(runtime),
+			exec: async (): Promise<never> => {
+				throw new Error("exec is not available in built-in extensions");
+			},
+			getActiveTools: runtime.getActiveTools.bind(runtime),
+			getAllTools: runtime.getAllTools.bind(runtime),
+			setActiveTools: runtime.setActiveTools.bind(runtime),
+			getCommands: runtime.getCommands.bind(runtime),
+			setModel: runtime.setModel.bind(runtime),
+			getThinkingLevel: runtime.getThinkingLevel.bind(runtime),
+			setThinkingLevel: runtime.setThinkingLevel.bind(runtime),
+			registerProvider: runtime.registerProvider.bind(runtime),
+			unregisterProvider: runtime.unregisterProvider.bind(runtime),
+			events: createEventBus(),
+		} as unknown as ExtensionAPI;
+
+		factory(api);
+		this.extensions.push(ext);
 	}
 
 	onError(listener: ExtensionErrorListener): () => void {

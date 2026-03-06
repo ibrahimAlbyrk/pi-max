@@ -61,6 +61,8 @@ import type {
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 } from "../../core/extensions/index.js";
+import { BgBadge } from "../../core/features/bg/badge.js";
+import { getProcessManager } from "../../core/features/bg/index.js";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
 import { type AppAction, KeybindingsManager } from "../../core/keybindings.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
@@ -254,6 +256,9 @@ export class InteractiveMode {
 
 	// Custom header from extension (undefined = use built-in header)
 	private customHeader: (Component & { dispose?(): void }) | undefined = undefined;
+
+	// Background process badge (editor bottom border)
+	private bgBadge: BgBadge | undefined = undefined;
 
 	// Splash screen layout (shown on fresh sessions)
 	private splashLayout: SplashLayout | undefined = undefined;
@@ -527,6 +532,20 @@ export class InteractiveMode {
 
 		// Initialize available provider count for footer display
 		await this.updateAvailableProviderCount();
+
+		// Wire up background process badge on editor bottom border
+		this.bgBadge = new BgBadge(
+			getProcessManager(),
+			(key, content) => {
+				type EditorWithBadge = EditorComponent & {
+					setBottomBorderBadge?: (k: string, v: string | undefined) => void;
+				};
+				(this.editor as EditorWithBadge).setBottomBorderBadge?.(key, content);
+				this.ui.requestRender();
+			},
+			theme,
+		);
+		this.bgBadge.start();
 	}
 
 	/**
@@ -3022,6 +3041,9 @@ export class InteractiveMode {
 				type: "session_shutdown",
 			});
 		}
+
+		// Clean up background process badge
+		this.bgBadge?.dispose();
 
 		// Wait for any pending renders to complete
 		// requestRender() uses process.nextTick(), so we wait one tick
