@@ -73,6 +73,8 @@ import { registerBgCommands } from "./features/bg/commands.js";
 import { setupBgFeature } from "./features/bg/index.js";
 import { registerLspCommands } from "./features/lsp/commands.js";
 import { setupLspFeature } from "./features/lsp/index.js";
+import { registerTaskCommands } from "./features/task/commands.js";
+import { setupTaskFeature } from "./features/task/index.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
@@ -89,6 +91,7 @@ import { createAllTools } from "./tools/index.js";
 import { lspDefinitionDefinition } from "./tools/lsp-definition.js";
 import { lspDiagnosticsDefinition } from "./tools/lsp-diagnostics.js";
 import { lspReferencesDefinition } from "./tools/lsp-references.js";
+import { taskToolDefinition } from "./tools/task.js";
 
 // ============================================================================
 // Skill Block Parsing
@@ -276,9 +279,36 @@ export class AgentSession {
 	// Built-in feature hooks
 	private _builtinShutdownHandlers: Array<() => Promise<void>> = [];
 	private _builtinSessionStartHandlers: Array<(ctx: { cwd: string }) => Promise<void>> = [];
-	private _builtinToolResultHandlers: Array<(event: { toolName: string; input: unknown }) => Promise<void>> = [];
+	private _builtinToolResultHandlers: Array<
+		(event: { toolName: string; input: unknown; result?: unknown }) => Promise<void>
+	> = [];
 	private _pendingToolArgs: Map<string, unknown> = new Map();
 	private _featureEventHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
+	private _builtinBeforeAgentStartHandlers: Array<
+		(ctx: { cwd: string }) => Promise<
+			| {
+					messages?: Array<{
+						customType: string;
+						content: string | (ImageContent | TextContent)[];
+						display: boolean;
+						details?: unknown;
+						excludeFromContext?: boolean;
+					}>;
+			  }
+			| undefined
+		>
+	> = [];
+	private _builtinToolCallHandlers: Array<(event: { toolName: string; input: unknown }) => Promise<void>> = [];
+	private _builtinAgentEndHandlers: Array<(event: { messages: AgentMessage[] }) => Promise<void>> = [];
+	private _builtinTurnStartHandlers: Array<(event: { turnIndex: number }) => Promise<void>> = [];
+	private _builtinTurnEndHandlers: Array<(event: { turnIndex: number }) => Promise<void>> = [];
+	private _builtinSessionBeforeCompactHandlers: Array<() => Promise<{ additionalContext?: string } | undefined>> = [];
+	private _builtinSessionCompactHandlers: Array<(event: { compactionEntry: CompactionEntry }) => Promise<void>> = [];
+	private _builtinSessionSwitchHandlers: Array<
+		(event: { reason: string; previousSessionFile: string | undefined }) => Promise<void>
+	> = [];
+	private _builtinSessionForkHandlers: Array<(event: { previousSessionFile: string | undefined }) => Promise<void>> =
+		[];
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
@@ -302,6 +332,7 @@ export class AgentSession {
 			lspDiagnosticsDefinition as unknown as ToolDefinition,
 			lspDefinitionDefinition as unknown as ToolDefinition,
 			lspReferencesDefinition as unknown as ToolDefinition,
+			taskToolDefinition as unknown as ToolDefinition,
 		];
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
@@ -320,6 +351,7 @@ export class AgentSession {
 
 		setupBgFeature(this);
 		setupLspFeature(this);
+		setupTaskFeature(this);
 	}
 
 	/** Model registry for API key resolution and model discovery */
@@ -410,20 +442,47 @@ export class AgentSession {
 			}
 		}
 
+		// Reset turn index on agent_start (managed here so it works with or without extension runner)
+		if (event.type === "agent_start") {
+			this._turnIndex = 0;
+		}
+
+		// Capture turn index before extension emit (turn_end increments it inside _emitExtensionEvent)
+		const _builtinTurnIndex = this._turnIndex;
+
 		// Emit to extensions first
 		await this._emitExtensionEvent(event);
 
 		// Notify all listeners
 		this._emit(event);
 
-		// Track tool args (start) and fire onToolResult handlers (end)
+		// Track tool args (start) and fire onToolResult / onToolCall handlers
 		if (event.type === "tool_execution_start") {
 			this._pendingToolArgs.set(event.toolCallId, event.args);
+			for (const handler of this._builtinToolCallHandlers) {
+				await handler({ toolName: event.toolName, input: event.args });
+			}
 		} else if (event.type === "tool_execution_end") {
 			const input = this._pendingToolArgs.get(event.toolCallId);
 			this._pendingToolArgs.delete(event.toolCallId);
 			for (const handler of this._builtinToolResultHandlers) {
-				await handler({ toolName: event.toolName, input });
+				await handler({ toolName: event.toolName, input, result: event.result as unknown });
+			}
+		}
+
+		// Call builtin turn / agent-end handlers
+		if (event.type === "turn_start") {
+			for (const handler of this._builtinTurnStartHandlers) {
+				await handler({ turnIndex: _builtinTurnIndex });
+			}
+		} else if (event.type === "turn_end") {
+			for (const handler of this._builtinTurnEndHandlers) {
+				await handler({ turnIndex: _builtinTurnIndex });
+			}
+			this._turnIndex++;
+		} else if (event.type === "agent_end") {
+			for (const handler of this._builtinAgentEndHandlers) {
+				await handler({ messages: event.messages });
 			}
 		}
 
@@ -522,7 +581,6 @@ export class AgentSession {
 		if (!this._extensionRunner) return;
 
 		if (event.type === "agent_start") {
-			this._turnIndex = 0;
 			await this._extensionRunner.emit({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
 			await this._extensionRunner.emit({ type: "agent_end", messages: event.messages });
@@ -541,7 +599,6 @@ export class AgentSession {
 				toolResults: event.toolResults,
 			};
 			await this._extensionRunner.emit(extensionEvent);
-			this._turnIndex++;
 		} else if (event.type === "message_start") {
 			const extensionEvent: MessageStartEvent = {
 				type: "message_start",
@@ -627,10 +684,10 @@ export class AgentSession {
 
 	/**
 	 * Register a handler to be called after each tool execution completes.
-	 * Receives the tool name and the input arguments passed to the tool.
-	 * Used by built-in features (e.g., LSP manager) to react to file edits.
+	 * Receives the tool name, input arguments, and the raw tool result.
+	 * Used by built-in features (e.g., LSP manager, task automation) to react to tool results.
 	 */
-	onToolResult(handler: (event: { toolName: string; input: unknown }) => Promise<void>): void {
+	onToolResult(handler: (event: { toolName: string; input: unknown; result?: unknown }) => Promise<void>): void {
 		this._builtinToolResultHandlers.push(handler);
 	}
 
@@ -662,6 +719,119 @@ export class AgentSession {
 				handler(data);
 			}
 		}
+	}
+
+	/**
+	 * Register a handler called before the agent starts processing each prompt.
+	 * Handlers may return custom messages to inject into the conversation context
+	 * (e.g., task state injected as a system-prompt-level aside).
+	 */
+	onBeforeAgentStart(
+		handler: (ctx: { cwd: string }) => Promise<
+			| {
+					messages?: Array<{
+						customType: string;
+						content: string | (ImageContent | TextContent)[];
+						display: boolean;
+						details?: unknown;
+						excludeFromContext?: boolean;
+					}>;
+			  }
+			| undefined
+		>,
+	): void {
+		this._builtinBeforeAgentStartHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler called when a tool execution starts.
+	 * Receives the tool name and the input arguments.
+	 * Used by built-in features (e.g., task automation) to react to tool invocations.
+	 */
+	onToolCall(handler: (event: { toolName: string; input: unknown }) => Promise<void>): void {
+		this._builtinToolCallHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler called when the agent finishes a turn (agent_end event).
+	 * Receives the full message list from the completed run.
+	 * Used by built-in features (e.g., task auto-notes generation).
+	 */
+	onAgentEnd(handler: (event: { messages: AgentMessage[] }) => Promise<void>): void {
+		this._builtinAgentEndHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler called at the start of each agent turn.
+	 * Receives the zero-based turn index within the current agent run.
+	 */
+	onTurnStart(handler: (event: { turnIndex: number }) => Promise<void>): void {
+		this._builtinTurnStartHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler called at the end of each agent turn.
+	 * Receives the zero-based turn index within the current agent run.
+	 */
+	onTurnEnd(handler: (event: { turnIndex: number }) => Promise<void>): void {
+		this._builtinTurnEndHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler called before session compaction begins.
+	 * Handlers may return additional context text that is appended to the
+	 * compaction instructions, allowing features to preserve their state in
+	 * the generated summary.
+	 */
+	onSessionBeforeCompact(handler: () => Promise<{ additionalContext?: string } | undefined>): void {
+		this._builtinSessionBeforeCompactHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler called after session compaction completes.
+	 * Receives the persisted compaction entry.
+	 * Used by built-in features (e.g., task management) to append snapshots.
+	 */
+	onSessionCompact(handler: (event: { compactionEntry: CompactionEntry }) => Promise<void>): void {
+		this._builtinSessionCompactHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler called when the active session is switched.
+	 * Receives the reason ("new" | "resume") and the previous session file path.
+	 */
+	onSessionSwitch(
+		handler: (event: { reason: string; previousSessionFile: string | undefined }) => Promise<void>,
+	): void {
+		this._builtinSessionSwitchHandlers.push(handler);
+	}
+
+	/**
+	 * Register a handler called when the session is forked.
+	 * Receives the previous session file path.
+	 */
+	onSessionFork(handler: (event: { previousSessionFile: string | undefined }) => Promise<void>): void {
+		this._builtinSessionForkHandlers.push(handler);
+	}
+
+	/**
+	 * Append an arbitrary entry to the current session.
+	 * Used by built-in features (e.g., task management) to persist snapshots
+	 * alongside the conversation (e.g., task-store-snapshot after compaction).
+	 */
+	appendEntry(customType: string, data: unknown): void {
+		this.sessionManager.appendCustomEntry(customType, data);
+	}
+
+	/**
+	 * Returns current context window size and estimated token usage.
+	 * Used by built-in features (e.g., task management) to determine how much
+	 * context can be injected before a prompt without triggering compaction.
+	 */
+	getContextInfo(): { contextWindow: number; estimatedTokens: number } {
+		const contextWindow = this.model?.contextWindow ?? 0;
+		const estimate = estimateContextTokens(this.messages);
+		return { contextWindow, estimatedTokens: estimate.tokens };
 	}
 
 	/**
@@ -990,6 +1160,24 @@ export class AgentSession {
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
 				this.agent.setSystemPrompt(this._baseSystemPrompt);
+			}
+		}
+
+		// Call builtin before_agent_start handlers and collect any context messages they return
+		for (const handler of this._builtinBeforeAgentStartHandlers) {
+			const result = await handler({ cwd: this._cwd });
+			if (result?.messages) {
+				for (const msg of result.messages) {
+					messages.push({
+						role: "custom",
+						customType: msg.customType,
+						content: msg.content,
+						display: msg.display,
+						details: msg.details,
+						timestamp: Date.now(),
+						...(msg.excludeFromContext ? { excludeFromContext: msg.excludeFromContext } : {}),
+					});
+				}
 			}
 		}
 
@@ -1379,7 +1567,11 @@ export class AgentSession {
 			});
 		}
 
-		// Emit session event to custom tools
+		// Call builtin session switch handlers
+		for (const handler of this._builtinSessionSwitchHandlers) {
+			await handler({ reason: "new", previousSessionFile });
+		}
+
 		return true;
 	}
 
@@ -1653,6 +1845,17 @@ export class AgentSession {
 				throw new Error("Nothing to compact (session too small)");
 			}
 
+			// Collect additional context from builtin before-compact handlers
+			let builtinAdditionalContext = "";
+			for (const handler of this._builtinSessionBeforeCompactHandlers) {
+				const result = await handler();
+				if (result?.additionalContext) {
+					builtinAdditionalContext += (builtinAdditionalContext ? "\n\n" : "") + result.additionalContext;
+				}
+			}
+			const mergedInstructions =
+				[customInstructions, builtinAdditionalContext].filter(Boolean).join("\n\n") || undefined;
+
 			let extensionCompaction: CompactionResult | undefined;
 			let fromExtension = false;
 
@@ -1661,7 +1864,7 @@ export class AgentSession {
 					type: "session_before_compact",
 					preparation,
 					branchEntries: pathEntries,
-					customInstructions,
+					customInstructions: mergedInstructions,
 					signal: this._compactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
@@ -1692,7 +1895,7 @@ export class AgentSession {
 					preparation,
 					this.model,
 					apiKey,
-					customInstructions,
+					mergedInstructions,
 					this._compactionAbortController.signal,
 				);
 				summary = result.summary;
@@ -1721,6 +1924,13 @@ export class AgentSession {
 					compactionEntry: savedCompactionEntry,
 					fromExtension,
 				});
+			}
+
+			// Call builtin session_compact handlers
+			if (savedCompactionEntry) {
+				for (const handler of this._builtinSessionCompactHandlers) {
+					await handler({ compactionEntry: savedCompactionEntry });
+				}
 			}
 
 			return {
@@ -1850,6 +2060,17 @@ export class AgentSession {
 				return;
 			}
 
+			// Collect additional context from builtin before-compact handlers
+			let builtinAutoAdditionalContext = "";
+			for (const handler of this._builtinSessionBeforeCompactHandlers) {
+				const bcResult = await handler();
+				if (bcResult?.additionalContext) {
+					builtinAutoAdditionalContext +=
+						(builtinAutoAdditionalContext ? "\n\n" : "") + bcResult.additionalContext;
+				}
+			}
+			const mergedAutoInstructions = builtinAutoAdditionalContext || undefined;
+
 			let extensionCompaction: CompactionResult | undefined;
 			let fromExtension = false;
 
@@ -1858,7 +2079,7 @@ export class AgentSession {
 					type: "session_before_compact",
 					preparation,
 					branchEntries: pathEntries,
-					customInstructions: undefined,
+					customInstructions: mergedAutoInstructions,
 					signal: this._autoCompactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
@@ -1890,7 +2111,7 @@ export class AgentSession {
 					preparation,
 					this.model,
 					apiKey,
-					undefined,
+					mergedAutoInstructions,
 					this._autoCompactionAbortController.signal,
 				);
 				summary = compactResult.summary;
@@ -1920,6 +2141,13 @@ export class AgentSession {
 					compactionEntry: savedCompactionEntry,
 					fromExtension,
 				});
+			}
+
+			// Call builtin session_compact handlers
+			if (savedCompactionEntry) {
+				for (const handler of this._builtinSessionCompactHandlers) {
+					await handler({ compactionEntry: savedCompactionEntry });
+				}
 			}
 
 			const result: CompactionResult = {
@@ -2218,6 +2446,8 @@ export class AgentSession {
 			this._extensionRunner.registerBuiltinExtension("<builtin-bg>", registerBgCommands);
 			// Register built-in /lsp-setup and /lsp-status commands.
 			this._extensionRunner.registerBuiltinExtension("<builtin-lsp>", registerLspCommands);
+			// Register built-in task commands, shortcuts, and widget.
+			this._extensionRunner.registerBuiltinExtension("<builtin-task>", registerTaskCommands);
 		}
 
 		const registeredTools = this._extensionRunner?.getAllRegisteredTools() ?? [];
@@ -2588,7 +2818,10 @@ export class AgentSession {
 			});
 		}
 
-		// Emit session event to custom tools
+		// Call builtin session switch handlers
+		for (const handler of this._builtinSessionSwitchHandlers) {
+			await handler({ reason: "resume", previousSessionFile });
+		}
 
 		this.agent.replaceMessages(sessionContext.messages);
 
@@ -2686,7 +2919,10 @@ export class AgentSession {
 			});
 		}
 
-		// Emit session event to custom tools (with reason "fork")
+		// Call builtin session fork handlers
+		for (const handler of this._builtinSessionForkHandlers) {
+			await handler({ previousSessionFile });
+		}
 
 		if (!skipConversationRestore) {
 			this.agent.replaceMessages(sessionContext.messages);

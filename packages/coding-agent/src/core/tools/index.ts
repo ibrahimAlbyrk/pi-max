@@ -39,6 +39,11 @@ export {
 	searchTool,
 } from "./search.js";
 export {
+	createTaskTool,
+	type TaskToolInput,
+	taskToolDefinition,
+} from "./task.js";
+export {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	formatSize,
@@ -77,6 +82,7 @@ import { createLspDiagnosticsTool } from "./lsp-diagnostics.js";
 import { createLspReferencesTool } from "./lsp-references.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
 import { createSearchTool, searchTool } from "./search.js";
+import { createTaskTool } from "./task.js";
 import { createWebfetchTool } from "./webfetch.js";
 import { createWebsearchTool } from "./websearch.js";
 import { createWriteTool, writeTool } from "./write.js";
@@ -100,6 +106,7 @@ const _toolRegistry = {
 	webfetch: (_cwd: string) => createWebfetchTool(),
 	websearch: (_cwd: string) => createWebsearchTool(),
 	bg: (cwd: string) => createBgTool(cwd),
+	task: (cwd: string) => createTaskTool(cwd),
 	lsp_diagnostics: (cwd: string) => createLspDiagnosticsTool(cwd),
 	lsp_definition: (cwd: string) => createLspDefinitionTool(cwd),
 	lsp_references: (cwd: string) => createLspReferencesTool(cwd),
@@ -171,6 +178,7 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		webfetch: createWebfetchTool(),
 		websearch: createWebsearchTool(),
 		bg: createBgTool(cwd),
+		task: createTaskTool(cwd),
 		lsp_diagnostics: createLspDiagnosticsTool(cwd),
 		lsp_definition: createLspDefinitionTool(cwd),
 		lsp_references: createLspReferencesTool(cwd),

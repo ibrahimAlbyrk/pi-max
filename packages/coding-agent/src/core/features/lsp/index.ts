@@ -28,9 +28,9 @@ export interface LspFeatureSession {
 	onSessionStart(handler: (ctx: { cwd: string }) => Promise<void>): void;
 	/**
 	 * Register a handler called after each tool result is received.
-	 * Provides the tool name and its input arguments.
+	 * Provides the tool name, input arguments, and the raw tool result.
 	 */
-	onToolResult(handler: (event: { toolName: string; input: unknown }) => Promise<void>): void;
+	onToolResult(handler: (event: { toolName: string; input: unknown; result?: unknown }) => Promise<void>): void;
 }
 
 /**
