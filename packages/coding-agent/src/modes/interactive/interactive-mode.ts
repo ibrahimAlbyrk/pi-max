@@ -63,6 +63,7 @@ import type {
 } from "../../core/extensions/index.js";
 import { BgBadge } from "../../core/features/bg/badge.js";
 import { getProcessManager } from "../../core/features/bg/index.js";
+import { installLspPackage, isLspPackageAvailable } from "../../core/features/lsp/availability.js";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
 import { type AppAction, KeybindingsManager } from "../../core/keybindings.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
@@ -700,6 +701,9 @@ export class InteractiveMode {
 
 		// Prompt to install missing extension dependencies (needs UI event loop)
 		await this.promptExtensionInstalls();
+
+		// Check LSP package availability and prompt user to install if missing
+		await this.promptLspInstall();
 
 		// Start version check asynchronously
 		this.checkForNewVersion().then((newVersion) => {
@@ -1368,6 +1372,45 @@ export class InteractiveMode {
 			await this.handleReloadCommand();
 		} else {
 			this.showWarning("Some dependencies failed to install. Fix the issues and run /reload.");
+		}
+	}
+
+	/**
+	 * Check if vscode-languageserver-protocol is installed.
+	 * If missing, ask the user whether to install it.
+	 * LSP tools (lsp_diagnostics, lsp_definition, lsp_references) remain
+	 * inactive until the package is available.
+	 */
+	private async promptLspInstall(): Promise<void> {
+		if (isLspPackageAvailable()) return;
+
+		const selected = await this.showExtensionSelector(
+			"LSP package (vscode-languageserver-protocol) is not installed.\nLSP tools will be unavailable. Install it now?",
+			["Yes", "No"],
+		);
+
+		if (selected !== "Yes") return;
+
+		const loader = new BorderedLoader(this.ui, theme, "Installing vscode-languageserver-protocol...", {
+			cancellable: false,
+		});
+		this.editorContainer.clear();
+		this.editorContainer.addChild(loader);
+		this.ui.setFocus(loader);
+		this.ui.requestRender();
+
+		const success = await installLspPackage(process.cwd());
+
+		loader.dispose();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
+		this.ui.requestRender();
+
+		if (success) {
+			this.showStatus("LSP package installed successfully.");
+		} else {
+			this.showWarning("Failed to install LSP package. LSP tools will be unavailable.");
 		}
 	}
 

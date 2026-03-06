@@ -1,20 +1,55 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import {
-	createProtocolConnection,
-	DefinitionRequest,
-	type Diagnostic,
-	DidChangeTextDocumentNotification,
-	DidOpenTextDocumentNotification,
-	InitializeRequest,
-	type ProtocolConnection,
-	PublishDiagnosticsNotification,
-	ReferencesRequest,
-	StreamMessageReader,
-	StreamMessageWriter,
-} from "vscode-languageserver-protocol/node.js";
 import type { LanguageConfig } from "./language-configs.js";
+
+// ---------------------------------------------------------------------------
+// Minimal LSP type stubs so this file compiles without
+// `vscode-languageserver-protocol` being installed.  The actual protocol
+// module is lazy-loaded at runtime via createRequire().
+// ---------------------------------------------------------------------------
+
+/** Mirrors vscode-languageserver-protocol Diagnostic (subset used here). */
+interface LspDiagnostic {
+	range: { start: { line: number; character: number } };
+	severity?: number;
+	message: string;
+}
+
+/** Mirrors vscode-languageserver-protocol ProtocolConnection (subset used here). */
+interface LspConnection {
+	onNotification(type: { method: string }, handler: (...args: any[]) => void): void;
+	listen(): void;
+	sendRequest(type: { method: string } | string, params?: unknown): Promise<any>;
+	sendNotification(type: { method: string } | string, params?: unknown): void;
+	dispose(): void;
+}
+
+/** Shape of the vscode-languageserver-protocol/node module (subset used here). */
+interface LspProtocolModule {
+	createProtocolConnection(reader: unknown, writer: unknown): LspConnection;
+	StreamMessageReader: new (readable: NodeJS.ReadableStream) => unknown;
+	StreamMessageWriter: new (writable: NodeJS.WritableStream) => unknown;
+	PublishDiagnosticsNotification: { type: { method: string } };
+	InitializeRequest: { type: { method: string } };
+	DefinitionRequest: { type: { method: string } };
+	ReferencesRequest: { type: { method: string } };
+	DidChangeTextDocumentNotification: { type: { method: string } };
+	DidOpenTextDocumentNotification: { type: { method: string } };
+}
+
+// Lazy-load the protocol module via require() so the app does not crash when
+// `vscode-languageserver-protocol` is not installed.  The package is resolved
+// on first use (when LspClient.start() is called), not at module load time.
+const _require = createRequire(import.meta.url);
+let _lsp: LspProtocolModule | undefined;
+function lsp(): LspProtocolModule {
+	if (!_lsp) {
+		_lsp = _require("vscode-languageserver-protocol/node.js") as LspProtocolModule;
+	}
+	return _lsp;
+}
 
 export interface Location {
 	file: string;
@@ -37,8 +72,8 @@ export interface DiagnosticEntry {
  */
 export class LspClient {
 	private process: ChildProcess | null = null;
-	private connection: ProtocolConnection | null = null;
-	private diagnosticsMap: Map<string, Diagnostic[]> = new Map();
+	private connection: LspConnection | null = null;
+	private diagnosticsMap: Map<string, LspDiagnostic[]> = new Map();
 	private openDocuments: Map<string, number> = new Map(); // uri → version
 	private initialized: boolean = false;
 	private initPromise: Promise<void> | null = null;
@@ -79,19 +114,24 @@ export class LspClient {
 			console.error(`[lsp] ${this.config.server.name} process error: ${err.message}`);
 		});
 
-		this.connection = createProtocolConnection(
-			new StreamMessageReader(this.process.stdout!),
-			new StreamMessageWriter(this.process.stdin!),
+		const proto = lsp();
+		const conn = proto.createProtocolConnection(
+			new proto.StreamMessageReader(this.process.stdout!),
+			new proto.StreamMessageWriter(this.process.stdin!),
 		);
+		this.connection = conn;
 
 		// Register PublishDiagnosticsNotification handler → update diagnosticsMap
-		this.connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
-			this.diagnosticsMap.set(params.uri, params.diagnostics);
-		});
+		conn.onNotification(
+			proto.PublishDiagnosticsNotification.type,
+			(params: { uri: string; diagnostics: LspDiagnostic[] }) => {
+				this.diagnosticsMap.set(params.uri, params.diagnostics);
+			},
+		);
 
-		this.connection.listen();
+		conn.listen();
 
-		await this.connection.sendRequest(InitializeRequest.type, {
+		await conn.sendRequest(proto.InitializeRequest.type, {
 			processId: process.pid,
 			rootUri: `file://${this.cwd}`,
 			capabilities: {
@@ -111,7 +151,7 @@ export class LspClient {
 			workspaceFolders: [{ uri: `file://${this.cwd}`, name: "workspace" }],
 		});
 
-		this.connection.sendNotification("initialized", {});
+		conn.sendNotification("initialized", {});
 		this.initialized = true;
 	}
 
@@ -176,16 +216,17 @@ export class LspClient {
 			return; // File may have been deleted — silently skip
 		}
 
+		const proto = lsp();
 		if (this.openDocuments.has(uri)) {
 			const version = (this.openDocuments.get(uri) ?? 0) + 1;
 			this.openDocuments.set(uri, version);
-			this.connection.sendNotification(DidChangeTextDocumentNotification.type, {
+			this.connection.sendNotification(proto.DidChangeTextDocumentNotification.type, {
 				textDocument: { uri, version },
 				contentChanges: [{ text: content }],
 			});
 		} else {
 			this.openDocuments.set(uri, 1);
-			this.connection.sendNotification(DidOpenTextDocumentNotification.type, {
+			this.connection.sendNotification(proto.DidOpenTextDocumentNotification.type, {
 				textDocument: {
 					uri,
 					languageId: this.config.languageId,
@@ -251,7 +292,7 @@ export class LspClient {
 
 		await this.ensureOpen(filePath);
 
-		const result = await this.connection.sendRequest(DefinitionRequest.type, {
+		const result = await this.connection.sendRequest(lsp().DefinitionRequest.type, {
 			textDocument: { uri: `file://${resolve(filePath)}` },
 			position: { line, character },
 		});
@@ -285,7 +326,7 @@ export class LspClient {
 
 		await this.ensureOpen(filePath);
 
-		const result = await this.connection.sendRequest(ReferencesRequest.type, {
+		const result = await this.connection.sendRequest(lsp().ReferencesRequest.type, {
 			textDocument: { uri: `file://${resolve(filePath)}` },
 			position: { line, character },
 			context: { includeDeclaration },
@@ -293,7 +334,7 @@ export class LspClient {
 
 		if (!result) return [];
 
-		return result.map((loc) => ({
+		return result.map((loc: { uri: string; range: { start: { line: number; character: number } } }) => ({
 			file: uriToPath(loc.uri),
 			line: loc.range.start.line,
 			character: loc.range.start.character,
