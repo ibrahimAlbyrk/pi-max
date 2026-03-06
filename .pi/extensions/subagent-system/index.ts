@@ -213,7 +213,7 @@ export default function (pi: ExtensionAPI) {
     description: "Stop a running agent by ID or name. Use when agent is stuck, unresponsive, or producing wrong output.",
     parameters: Type.Object({
       agent: Type.String({
-        description: "Agent ID or name to stop. Use list_agents to see running agents.",
+        description: "Agent ID or name to stop. Use active_agents to see running agents.",
       }),
     }),
 
@@ -250,7 +250,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // list_agents — List available and running agents
+  // list_agents — Discover available agent types (static definitions only)
   pi.registerTool({
     name: "list_agents",
     label: "List Agents",
@@ -259,43 +259,55 @@ export default function (pi: ExtensionAPI) {
 
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const definitions = manager.getAvailableDefinitions();
+
+      if (definitions.length === 0) {
+        return { content: [{ type: "text", text: "No agent definitions found." }] };
+      }
+
+      const lines: string[] = [];
+      for (const def of definitions) {
+        let line = `${def.name} — ${def.description}`;
+        if (def.model) line += ` (${def.model})`;
+        lines.push(line);
+      }
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    },
+  });
+
+  // active_agents — Minimal runtime status of running/recent agents
+  pi.registerTool({
+    name: "active_agents",
+    label: "Active Agents",
+    description: "Check status of running agents. Returns one line per agent. Do NOT poll — agent results are delivered automatically when they complete.",
+    parameters: Type.Object({}),
+
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const running = manager.getRunningAgents();
       const all = manager.getAllAgents();
+      const completed = all.filter(
+        (a) => a.status === "completed" || a.status === "error" || a.status === "aborted"
+      );
 
-      let text = "## Available Agent Definitions\n\n";
-      if (definitions.length === 0) {
-        text += "No agent definitions found in .pi/agents/\n";
-      } else {
-        for (const def of definitions) {
-          text += `- **${def.name}**: ${def.description}`;
-          if (def.model) text += ` (model: ${def.model})`;
-          if (def.tools) text += ` [tools: ${def.tools.join(", ")}]`;
-          text += ` (${def.source})\n`;
+      if (running.length === 0 && completed.length === 0) {
+        return { content: [{ type: "text", text: "No active agents." }] };
+      }
+
+      const lines: string[] = [];
+
+      for (const agent of running) {
+        const usage = agent.getUsage();
+        lines.push(`${agent.name}  ${agent.id}  ${agent.status}  ${usage.turns}t  $${usage.cost.toFixed(3)}`);
+      }
+
+      if (completed.length > 0) {
+        if (running.length > 0) lines.push("--");
+        for (const agent of completed) {
+          lines.push(`${agent.name}  ${agent.id}  ${agent.status}`);
         }
       }
 
-      text += "\n## Running Agents\n\n";
-      if (running.length === 0) {
-        text += "No agents currently running.\n";
-      } else {
-        for (const agent of running) {
-          const usage = agent.getUsage();
-          text += `- **${agent.name}** (${agent.id}) — ${agent.status}`;
-          text += ` | ${usage.turns} turns | $${usage.cost.toFixed(4)}`;
-          text += ` | runtime: ${agent.runtimeMode}\n`;
-        }
-      }
-
-      if (all.length > running.length) {
-        text += "\n## Recently Completed\n\n";
-        for (const agent of all) {
-          if (agent.status === "completed" || agent.status === "error" || agent.status === "aborted") {
-            text += `- **${agent.name}** (${agent.id}) — ${agent.status}\n`;
-          }
-        }
-      }
-
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text: lines.join("\n") }] };
     },
   });
 
