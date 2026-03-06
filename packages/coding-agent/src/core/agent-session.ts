@@ -2434,6 +2434,7 @@ export class AgentSession {
 						this._cwd,
 						this.sessionManager,
 						this._modelRegistry,
+						extensionsResult.eventBus,
 					)
 				: undefined;
 		if (this._extensionRunnerRef) {

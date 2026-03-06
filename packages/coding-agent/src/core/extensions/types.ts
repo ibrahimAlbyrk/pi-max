@@ -1372,6 +1372,8 @@ export interface LoadExtensionsResult {
 	errors: ExtensionLoadError[];
 	/** Shared runtime - actions are throwing stubs until runner.initialize() */
 	runtime: ExtensionRuntime;
+	/** Shared event bus used by all extensions for cross-extension communication. */
+	eventBus?: EventBus;
 }
 
 // ============================================================================

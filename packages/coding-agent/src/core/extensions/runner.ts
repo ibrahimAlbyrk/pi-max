@@ -7,7 +7,7 @@ import type { ImageContent, Model } from "@mariozechner/pi-ai";
 import type { KeyId } from "@mariozechner/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "../diagnostics.js";
-import { createEventBus } from "../event-bus.js";
+import { createEventBus, type EventBus } from "../event-bus.js";
 import type { KeyAction, KeybindingsConfig } from "../keybindings.js";
 import type { ModelRegistry } from "../model-registry.js";
 import type { SessionManager } from "../session-manager.js";
@@ -204,6 +204,7 @@ export class ExtensionRunner {
 	private cwd: string;
 	private sessionManager: SessionManager;
 	private modelRegistry: ModelRegistry;
+	private eventBus: EventBus;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private isIdleFn: () => boolean = () => true;
@@ -228,6 +229,7 @@ export class ExtensionRunner {
 		cwd: string,
 		sessionManager: SessionManager,
 		modelRegistry: ModelRegistry,
+		eventBus?: EventBus,
 	) {
 		this.extensions = extensions;
 		this.runtime = runtime;
@@ -235,6 +237,7 @@ export class ExtensionRunner {
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
+		this.eventBus = eventBus ?? createEventBus();
 	}
 
 	bindCore(actions: ExtensionActions, contextActions: ExtensionContextActions): void {
@@ -476,7 +479,7 @@ export class ExtensionRunner {
 			setThinkingLevel: runtime.setThinkingLevel.bind(runtime),
 			registerProvider: runtime.registerProvider.bind(runtime),
 			unregisterProvider: runtime.unregisterProvider.bind(runtime),
-			events: createEventBus(),
+			events: this.eventBus,
 		} as unknown as ExtensionAPI;
 
 		factory(api);
