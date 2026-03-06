@@ -29,7 +29,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync, renameSync } from "fs";
 import { join, dirname } from "path";
-import type { Task, Sprint, TaskStore, TaskIndex, TaskIndexEntry, SprintIndexEntry } from "./types.js";
+import type { Task, TaskGroup, Sprint, TaskStore, TaskIndex, TaskIndexEntry, GroupIndexEntry, SprintIndexEntry } from "./types.js";
 import { createDefaultStore, recalculateNextIds } from "./store.js";
 
 // ─── Interface ───────────────────────────────────────────────────
@@ -41,10 +41,14 @@ export interface TaskStorage {
 	save(store: TaskStore): void;
 	/** Save a single task file + update index */
 	saveTask(task: Task, store: TaskStore): void;
+	/** Save a single group file + update index */
+	saveGroup(group: TaskGroup, store: TaskStore): void;
 	/** Save a single sprint file + update index */
 	saveSprint(sprint: Sprint, store: TaskStore): void;
 	/** Delete a task file + update index */
 	deleteTask(id: number, store: TaskStore): void;
+	/** Delete a group file + update index */
+	deleteGroup(id: number, store: TaskStore): void;
 	/** Save only the index (meta changes like activeTaskId) */
 	saveIndex(store: TaskStore): void;
 
@@ -67,6 +71,7 @@ export interface TaskStorage {
 export class PerFileTaskStorage implements TaskStorage {
 	public readonly basePath: string;
 	private readonly tasksDir: string;
+	private readonly groupsDir: string;
 	private readonly sprintsDir: string;
 	private readonly archiveTasksDir: string;
 	private readonly archiveSprintsDir: string;
@@ -76,6 +81,7 @@ export class PerFileTaskStorage implements TaskStorage {
 	constructor(cwd: string) {
 		this.basePath = join(cwd, ".pi", "tasks");
 		this.tasksDir = join(this.basePath, "tasks");
+		this.groupsDir = join(this.basePath, "groups");
 		this.sprintsDir = join(this.basePath, "sprints");
 		this.archiveTasksDir = join(this.basePath, "archive", "tasks");
 		this.archiveSprintsDir = join(this.basePath, "archive", "sprints");
@@ -127,7 +133,25 @@ export class PerFileTaskStorage implements TaskStorage {
 		// Sort tasks by id for consistent ordering
 		tasks.sort((a, b) => a.id - b.id);
 
-		// 3. Read all sprint files
+		// 3. Read all group files
+		const groups: TaskGroup[] = [];
+		if (existsSync(this.groupsDir)) {
+			const files = readdirSync(this.groupsDir).filter((f) => f.endsWith(".json"));
+			for (const file of files) {
+				try {
+					const raw = readFileSync(join(this.groupsDir, file), "utf-8");
+					const group = JSON.parse(raw) as TaskGroup;
+					groups.push(group);
+				} catch (err) {
+					console.error(`[task-management] Failed to read group file ${file}: ${err}`);
+				}
+			}
+		}
+
+		// Sort groups by id
+		groups.sort((a, b) => a.id - b.id);
+
+		// 4. Read all sprint files
 		const sprints: Sprint[] = [];
 		if (existsSync(this.sprintsDir)) {
 			const files = readdirSync(this.sprintsDir).filter((f) => f.endsWith(".json"));
@@ -145,29 +169,24 @@ export class PerFileTaskStorage implements TaskStorage {
 		// Sort sprints by id
 		sprints.sort((a, b) => a.id - b.id);
 
-		// 4. Reconstruct TaskStore
+		// 5. Reconstruct TaskStore
 		const store: TaskStore = {
 			tasks,
+			groups,
 			sprints,
 			nextTaskId: index.nextTaskId,
+			nextGroupId: index.nextGroupId ?? 1,
 			nextSprintId: index.nextSprintId,
 			activeTaskId: index.activeTaskId,
 			activeSprintId: index.activeSprintId,
 		};
 
-		// 5. Validate & fix index: ensure nextIds match actual disk state
-		const expectedNextTaskId = tasks.length > 0
-			? Math.max(...tasks.map((t) => t.id)) + 1
-			: 1;
-		const expectedNextSprintId = sprints.length > 0
-			? Math.max(...sprints.map((s) => s.id)) + 1
-			: 1;
+		// 6. Migrate parentId → groupId if old-format tasks detected
+		this.migrateParentIdToGroupId(store);
 
-		if (store.nextTaskId !== expectedNextTaskId || store.nextSprintId !== expectedNextSprintId) {
-			recalculateNextIds(store);
-			// Persist corrected index to disk
-			this.writeIndex(store);
-		}
+		// 7. Validate & fix index: ensure nextIds match actual disk state
+		recalculateNextIds(store);
+		this.writeIndex(store);
 
 		// Clear activeTaskId if task no longer exists
 		if (store.activeTaskId !== null && !tasks.some((t) => t.id === store.activeTaskId)) {
@@ -176,6 +195,63 @@ export class PerFileTaskStorage implements TaskStorage {
 		}
 
 		return store;
+	}
+
+	/**
+	 * Migrate old parentId-based hierarchy to groupId-based groups.
+	 * When loading, if any tasks still have `parentId` set (old format),
+	 * convert parent tasks into groups and assign children to those groups.
+	 */
+	private migrateParentIdToGroupId(store: TaskStore): void {
+		// Check if any tasks have the old parentId field
+		const tasksWithParentId = store.tasks.filter((t) => (t as any).parentId != null);
+		if (tasksWithParentId.length === 0) return;
+
+		console.error("[task-management] Migrating parentId hierarchy to task groups...");
+
+		// Find unique parent task IDs
+		const parentIds = new Set(tasksWithParentId.map((t) => (t as any).parentId as number));
+
+		// For each parent, create a group and reassign children
+		for (const parentId of parentIds) {
+			const parentTask = store.tasks.find((t) => t.id === parentId);
+			if (!parentTask) continue;
+
+			// Create a group from the parent task
+			const group: TaskGroup = {
+				id: store.nextGroupId,
+				name: parentTask.title,
+				description: parentTask.description || "",
+				createdAt: parentTask.createdAt,
+			};
+			store.groups.push(group);
+			store.nextGroupId++;
+
+			// Assign children to the new group
+			for (const child of store.tasks) {
+				if ((child as any).parentId === parentId) {
+					child.groupId = group.id;
+					delete (child as any).parentId;
+				}
+			}
+
+			// Remove the parent task (it's now a group)
+			store.tasks = store.tasks.filter((t) => t.id !== parentId);
+		}
+
+		// Clean remaining parentId fields
+		for (const task of store.tasks) {
+			if ((task as any).parentId !== undefined) {
+				if (task.groupId === undefined || task.groupId === null) {
+					task.groupId = null;
+				}
+				delete (task as any).parentId;
+			}
+		}
+
+		// Persist migrated state
+		this.save(store);
+		console.error(`[task-management] Migration complete: ${parentIds.size} parent task(s) converted to groups.`);
 	}
 
 	// ─── Save (full store) ───────────────────────────────────────
@@ -200,23 +276,39 @@ export class PerFileTaskStorage implements TaskStorage {
 				}
 			}
 
-			// 4. Determine which sprint files currently exist on disk
+			// 4. Determine which group files currently exist on disk
+			const existingGroupFiles = this.getExistingIds(this.groupsDir);
+			const currentGroupIds = new Set(store.groups.map((g) => g.id));
+
+			// 5. Write each group to its own file
+			for (const group of store.groups) {
+				this.writeGroupFile(group);
+			}
+
+			// 6. Remove deleted group files
+			for (const existingId of existingGroupFiles) {
+				if (!currentGroupIds.has(existingId)) {
+					this.removeFile(join(this.groupsDir, `${existingId}.json`));
+				}
+			}
+
+			// 7. Determine which sprint files currently exist on disk
 			const existingSprintFiles = this.getExistingIds(this.sprintsDir);
 			const currentSprintIds = new Set(store.sprints.map((s) => s.id));
 
-			// 5. Write each sprint to its own file
+			// 8. Write each sprint to its own file
 			for (const sprint of store.sprints) {
 				this.writeSprintFile(sprint);
 			}
 
-			// 6. Remove deleted sprint files
+			// 9. Remove deleted sprint files
 			for (const existingId of existingSprintFiles) {
 				if (!currentSprintIds.has(existingId)) {
 					this.removeFile(join(this.sprintsDir, `${existingId}.json`));
 				}
 			}
 
-			// 7. Write index
+			// 10. Write index
 			this.writeIndex(store);
 		} catch (err) {
 			console.error(`[task-management] Failed to save store: ${err}`);
@@ -232,6 +324,29 @@ export class PerFileTaskStorage implements TaskStorage {
 			this.writeIndex(store);
 		} catch (err) {
 			console.error(`[task-management] Failed to save task #${task.id}: ${err}`);
+		}
+	}
+
+	// ─── Granular Save (single group) ────────────────────────────
+
+	saveGroup(group: TaskGroup, store: TaskStore): void {
+		try {
+			this.ensureDirectories();
+			this.writeGroupFile(group);
+			this.writeIndex(store);
+		} catch (err) {
+			console.error(`[task-management] Failed to save group #G${group.id}: ${err}`);
+		}
+	}
+
+	// ─── Delete Group File ───────────────────────────────────────
+
+	deleteGroup(id: number, store: TaskStore): void {
+		try {
+			this.removeFile(join(this.groupsDir, `${id}.json`));
+			this.writeIndex(store);
+		} catch (err) {
+			console.error(`[task-management] Failed to delete group #G${id}: ${err}`);
 		}
 	}
 
@@ -361,12 +476,17 @@ export class PerFileTaskStorage implements TaskStorage {
 
 			const store: TaskStore = {
 				tasks: data.tasks ?? [],
+				groups: (data as any).groups ?? [],
 				sprints: data.sprints ?? [],
 				nextTaskId: data.nextTaskId ?? 1,
+				nextGroupId: (data as any).nextGroupId ?? 1,
 				nextSprintId: data.nextSprintId ?? 1,
 				activeTaskId: data.activeTaskId ?? null,
 				activeSprintId: data.activeSprintId ?? null,
 			};
+
+			// Migrate parentId → groupId if needed
+			this.migrateParentIdToGroupId(store);
 
 			// Write to new per-file format
 			this.save(store);
@@ -393,6 +513,9 @@ export class PerFileTaskStorage implements TaskStorage {
 		if (!existsSync(this.tasksDir)) {
 			mkdirSync(this.tasksDir, { recursive: true });
 		}
+		if (!existsSync(this.groupsDir)) {
+			mkdirSync(this.groupsDir, { recursive: true });
+		}
 		if (!existsSync(this.sprintsDir)) {
 			mkdirSync(this.sprintsDir, { recursive: true });
 		}
@@ -409,12 +532,14 @@ export class PerFileTaskStorage implements TaskStorage {
 
 	private writeIndex(store: TaskStore): void {
 		const index: TaskIndex = {
-			version: 1,
+			version: 2,
 			nextTaskId: store.nextTaskId,
+			nextGroupId: store.nextGroupId,
 			nextSprintId: store.nextSprintId,
 			activeTaskId: store.activeTaskId,
 			activeSprintId: store.activeSprintId,
 			tasks: {},
+			groups: {},
 			sprints: {},
 		};
 
@@ -424,10 +549,16 @@ export class PerFileTaskStorage implements TaskStorage {
 				priority: task.priority,
 				title: task.title,
 				assignee: task.assignee,
-				parentId: task.parentId,
+				groupId: task.groupId,
 				sprintId: task.sprintId,
 				agentName: task.agentName ?? null,
 				agentColor: task.agentColor ?? null,
+			};
+		}
+
+		for (const group of store.groups) {
+			index.groups[String(group.id)] = {
+				name: group.name,
 			};
 		}
 
@@ -444,6 +575,11 @@ export class PerFileTaskStorage implements TaskStorage {
 	private writeTaskFile(task: Task): void {
 		const filePath = join(this.tasksDir, `${task.id}.json`);
 		this.atomicWrite(filePath, JSON.stringify(task, null, 2));
+	}
+
+	private writeGroupFile(group: TaskGroup): void {
+		const filePath = join(this.groupsDir, `${group.id}.json`);
+		this.atomicWrite(filePath, JSON.stringify(group, null, 2));
 	}
 
 	private writeSprintFile(sprint: Sprint): void {

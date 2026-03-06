@@ -38,7 +38,7 @@ export function taskRenderCall(args: Record<string, unknown>, theme: Theme): Ret
 		case "update":
 			if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
 			{
-				const fields = ["title", "description", "priority", "tags", "assignee", "estimatedMinutes", "parentId"]
+				const fields = ["title", "description", "priority", "tags", "assignee", "estimatedMinutes", "groupId"]
 					.filter((f) => args[f] !== undefined);
 				if (fields.length > 0) text += ` ${theme.fg("dim", `[${fields.join(", ")}]`)}`;
 			}
@@ -101,14 +101,26 @@ export function taskRenderCall(args: Record<string, unknown>, theme: Theme): Ret
 				text += ` → ${theme.fg("accent", `#S${args.parentId}`)}`;
 			break;
 
-		// Phase 3 — Hierarchy
-		case "move_under":
-			if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
-			if (args.parentId !== undefined) text += ` → ${theme.fg("accent", `#${args.parentId}`)}`;
+		// Groups
+		case "create_group":
+			if (args.title) text += ` ${theme.fg("text", `"${args.title}"`)}`;
 			break;
 
-		case "promote":
-		case "flatten":
+		case "delete_group":
+			if (args.id !== undefined) text += ` ${theme.fg("accent", `G${args.id}`)}`;
+			break;
+
+		case "rename_group":
+			if (args.id !== undefined) text += ` ${theme.fg("accent", `G${args.id}`)}`;
+			if (args.title) text += ` → ${theme.fg("text", `"${args.title}"`)}`;
+			break;
+
+		case "assign_group":
+			if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
+			if (args.groupId !== undefined) text += ` → ${theme.fg("accent", `G${args.groupId}`)}`;
+			break;
+
+		case "unassign_group":
 			if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
 			break;
 

@@ -1,15 +1,16 @@
 /**
- * Full Export — Complete task dump with hierarchy, notes, dependencies, time
+ * Full Export — Complete task dump with groups, notes, dependencies, time
  *
- * Renders tasks as a hierarchical Markdown document. Root tasks are H2,
- * children are H3/H4, preserving the parent-child tree.
+ * Renders tasks grouped by TaskGroup as a Markdown document.
+ * Groups are H2 sections, tasks within groups are H3.
+ * Ungrouped tasks are listed under a separate section.
  * Includes all metadata for round-trip import fidelity.
  *
  * Pure function: TaskStore → string
  */
 
-import type { TaskStore, Task, Sprint } from "../types.js";
-import { formatElapsed } from "../store.js";
+import type { TaskStore, Task, TaskGroup, Sprint } from "../types.js";
+import { formatElapsed, findGroup, getGroupTasks } from "../store.js";
 
 const STATUS_MARK: Record<string, string> = {
 	done: "✓", in_progress: "⏳", todo: "○",
@@ -23,12 +24,34 @@ export function generateFullExport(store: TaskStore): string {
 	lines.push("# Project Tasks\n");
 	lines.push(`> Generated: ${now}\n`);
 
-	// Render tasks as a tree
-	const rootTasks = store.tasks.filter((t) => t.parentId === null);
+	// Render groups with their tasks
+	for (const group of store.groups) {
+		const tasks = getGroupTasks(store, group.id);
+		const doneCount = tasks.filter((t) => t.status === "done").length;
 
-	for (const task of rootTasks) {
-		renderTask(task, store, lines, 2); // H2 for root
+		lines.push(`## G${group.id} ${escMd(group.name)} (${doneCount}/${tasks.length} done)\n`);
+		if (group.description) {
+			lines.push(`${group.description}\n`);
+		}
+
+		for (const task of tasks) {
+			renderTask(task, store, lines, 3);
+		}
 		lines.push("---\n");
+	}
+
+	// Render ungrouped tasks
+	const ungrouped = store.tasks.filter((t) => t.groupId === null);
+	if (ungrouped.length > 0) {
+		if (store.groups.length > 0) {
+			lines.push("## Ungrouped Tasks\n");
+		}
+		for (const task of ungrouped) {
+			renderTask(task, store, lines, store.groups.length > 0 ? 3 : 2);
+		}
+		if (store.groups.length > 0) {
+			lines.push("---\n");
+		}
 	}
 
 	// Sprints section
@@ -45,10 +68,9 @@ export function generateFullExport(store: TaskStore): string {
 
 function renderTask(task: Task, store: TaskStore, lines: string[], headingLevel: number): void {
 	const hashes = "#".repeat(Math.min(headingLevel, 6));
-	const mark = STATUS_MARK[task.status] ?? "○";
 	const statusLabel = task.status === "done" ? "done ✓" : task.status.replace(/_/g, " ");
 
-	// Heading: ## #5 Initialize repo [medium] — done ✓
+	// Heading: ### #5 Initialize repo [medium] — done ✓
 	lines.push(`${hashes} #${task.id} ${escMd(task.title)} [${task.priority}] — ${statusLabel}\n`);
 
 	// Metadata
@@ -76,6 +98,10 @@ function renderTask(task: Task, store: TaskStore, lines: string[], headingLevel:
 	if (task.tags.length > 0) {
 		meta.push(`**Tags:** ${task.tags.map((t) => `\`${t}\``).join(", ")}`);
 	}
+	if (task.groupId != null) {
+		const group = findGroup(store, task.groupId);
+		if (group) meta.push(`**Group:** G${group.id} ${group.name}`);
+	}
 	if (task.sprintId != null) {
 		const sprint = store.sprints.find((s) => s.id === task.sprintId);
 		if (sprint) meta.push(`**Sprint:** ${sprint.name}`);
@@ -94,12 +120,6 @@ function renderTask(task: Task, store: TaskStore, lines: string[], headingLevel:
 			lines.push(`- [${note.author} ${time}] ${escMd(note.text)}`);
 		}
 		lines.push("");
-	}
-
-	// Render children recursively
-	const children = store.tasks.filter((t) => t.parentId === task.id);
-	for (const child of children) {
-		renderTask(child, store, lines, headingLevel + 1);
 	}
 }
 

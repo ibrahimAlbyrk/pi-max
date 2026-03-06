@@ -13,7 +13,7 @@ import type { Theme } from "@mariozechner/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { TaskStore, Task, TaskStatus, TaskPriority } from "../types.js";
 import { STATUS_ICONS, PRIORITY_COLORS, priorityLabel } from "../rendering/icons.js";
-import { formatElapsed, findTask as findTaskInStore, isGroupContainer, updateAncestorStatuses } from "../store.js";
+import { formatElapsed, findTask as findTaskInStore, findGroup } from "../store.js";
 import { PRIORITY_ORDER } from "./helpers.js";
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -125,40 +125,12 @@ export class KanbanBoard {
 	}
 
 	/**
-	 * Organize tasks hierarchically: parent tasks followed by their children.
-	 * Adds depth information for proper indentation.
+	 * Organize tasks as a flat list with depth=0 (no hierarchy, groups are separate).
 	 */
 	private organizeTasksHierarchically(store: TaskStore): (Task & { depth: number })[] {
-		const result: (Task & { depth: number })[] = [];
-		const processed = new Set<number>();
-
-		// Helper function to add task and its children recursively
-		const addTaskWithChildren = (task: Task, depth: number = 0) => {
-			if (processed.has(task.id)) return;
-			
-			processed.add(task.id);
-			result.push({ ...task, depth });
-
-			// Add children sorted by priority
-			const children = store.tasks
-				.filter((t) => t.parentId === task.id)
-				.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2));
-
-			for (const child of children) {
-				addTaskWithChildren(child, depth + 1);
-			}
-		};
-
-		// Start with root tasks (no parent) sorted by priority
-		const rootTasks = store.tasks
-			.filter((t) => t.parentId === null)
-			.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2));
-
-		for (const rootTask of rootTasks) {
-			addTaskWithChildren(rootTask);
-		}
-
-		return result;
+		return store.tasks
+			.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2))
+			.map((t) => ({ ...t, depth: 0 }));
 	}
 
 	/** Rebuild columns from current store state, then focus on a task. */
@@ -326,9 +298,6 @@ export class KanbanBoard {
 				this.store.activeTaskId = null;
 			}
 		}
-
-		// Auto-derive ancestor statuses
-		updateAncestorStatuses(this.store, storeTask.parentId);
 
 		// Notify for persistence (does NOT close the overlay)
 		this.onMutate({ type: "move", task: storeTask, oldStatus, newStatus });
@@ -637,6 +606,16 @@ export class KanbanBoard {
 		} else if (task.assignee) {
 			contextText = `@${task.assignee}`;
 		}
+
+		// Prepend group label if task belongs to a group
+		if (task.groupId !== null) {
+			const group = findGroup(this.store, task.groupId);
+			if (group) {
+				const groupLabel = `G${group.id}`;
+				contextText = contextText ? `${groupLabel} · ${contextText}` : groupLabel;
+			}
+		}
+
 		const l3 = " " + indent + this.padToWidth(th.fg("dim", truncateToWidth(contextText, contentWidth)), contentWidth);
 
 		return { l1, l2, l3 };

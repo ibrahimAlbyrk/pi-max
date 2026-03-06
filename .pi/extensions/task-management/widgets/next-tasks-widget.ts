@@ -14,7 +14,6 @@ import type { Component, TUI } from "@mariozechner/pi-tui";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { TaskStore, Task } from "../types.js";
-import { isGroupContainer } from "../store.js";
 import { PRIORITY_COLORS, priorityLabel } from "../rendering/icons.js";
 import { truncate, PRIORITY_ORDER } from "../ui/helpers.js";
 
@@ -176,11 +175,14 @@ function stripAnsi(str: string): string {
  * Render agent assignment tag for a task.
  * Returns colored " @AgentName" with pulse/breathe animation if color is available.
  */
-function renderAgentTag(task: Task): string {
+function renderAgentTag(task: Task, isDone?: boolean): string {
 	if (!task.agentName) return "";
+	if (isDone) return `  \x1b[9;2m@${task.agentName}\x1b[0m`;
 	if (!task.agentColor) return `  @${task.agentName}`;
 	return `  ${applyPulse(`@${task.agentName}`, task.agentColor)}`;
 }
+
+
 
 interface TaskAnimationState {
 	type: "slide-in";
@@ -219,11 +221,7 @@ class NextTasksComponent implements Component {
 	}
 
 	private getCurrentTaskIds(store: TaskStore): Set<number> {
-		return new Set(
-			store.tasks
-				.filter((t) => !isGroupContainer(store, t.id))
-				.map((t) => t.id)
-		);
+		return new Set(store.tasks.map((t) => t.id));
 	}
 
 	updateState(store: TaskStore, collapsed: boolean): void {
@@ -371,7 +369,7 @@ class NextTasksComponent implements Component {
 		const store = this.store;
 
 		// ── Collect leaf tasks ──
-		const leafTasks = store.tasks.filter((t) => !isGroupContainer(store, t.id));
+		const leafTasks = store.tasks;
 
 		const inProgress = leafTasks
 			.filter((t) => t.status === "in_progress")
@@ -416,7 +414,7 @@ class NextTasksComponent implements Component {
 			: null;
 
 		if (activeSprint && !this.collapsed) {
-			const sprintTasks = store.tasks.filter((t) => t.sprintId === activeSprint.id && !isGroupContainer(store, t.id));
+			const sprintTasks = store.tasks.filter((t) => t.sprintId === activeSprint.id);
 			const done = sprintTasks.filter((t) => t.status === "done").length;
 			const total = sprintTasks.length;
 			const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -485,7 +483,7 @@ class NextTasksComponent implements Component {
 
 			const baseContent = `${icon} ${id}   ${title}`;
 			const animatedContent = this.renderTaskLineWithAnimation(baseContent, t.id);
-			if (animatedContent) taskLines.push({ content: animatedContent, agentTag: renderAgentTag(t), isDone: true });
+			if (animatedContent) taskLines.push({ content: animatedContent, agentTag: renderAgentTag(t, true), isDone: true });
 		}
 
 		if (taskLines.length === 0) return [];

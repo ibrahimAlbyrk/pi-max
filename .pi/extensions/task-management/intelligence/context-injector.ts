@@ -9,16 +9,15 @@
  */
 
 import type { TaskStore, Task } from "../types.js";
-import { isGroupContainer } from "../store.js";
+import { findGroup, getGroupTasks } from "../store.js";
 import { PRIORITY_ORDER } from "../ui/helpers.js";
 
 export function buildTaskContext(
 	store: TaskStore,
 	budgetLevel: "minimal" | "medium" | "full",
 ): string | null {
-	// Only consider leaf tasks — group containers are not actionable
+	// All tasks are actionable (groups are separate entities)
 	const activeTasks = store.tasks.filter((t) =>
-		!isGroupContainer(store, t.id) &&
 		["todo", "in_progress", "in_review", "blocked"].includes(t.status),
 	);
 
@@ -34,10 +33,10 @@ export function buildTaskContext(
 	lines.push("");
 	lines.push("RULES:");
 	lines.push("• Before ANY implementation work, create tasks with bulk_create (one call, not loops).");
-	lines.push("• Use negative parentId in bulk_create for hierarchy: -1=1st item, -2=2nd, etc.");
-	lines.push("  Example: [{title:\"Auth\"}, {title:\"Login\", parentId:-1}, {title:\"JWT\", parentId:-1}]");
+	lines.push("• Use indentation in bulk_create text for groups: top-level items with children become groups.");
+	lines.push("  Groups (G1, G2) are organizational only — they have no status. Tasks (#1, #2) are actionable.");
 	lines.push("• One task at a time: start → work → complete → next.");
-	lines.push("• Each task = one concrete deliverable. If multi-step, split into subtasks.");
+	lines.push("• Each task = one concrete deliverable. If multi-step, create a group and split into tasks.");
 	lines.push("• When multiple operations are needed, batch them (bulk_create, not repeated create).");
 	lines.push("");
 
@@ -61,16 +60,13 @@ export function buildTaskContext(
 			}
 		}
 
-		// Sub-tasks progress
-		if (budgetLevel !== "minimal") {
-			const subtasks = store.tasks.filter((t) => t.parentId === activeTask.id);
-			if (subtasks.length > 0) {
-				const done = subtasks.filter((t) => t.status === "done").length;
-				lines.push(`   Sub-tasks: ${done}/${subtasks.length} done`);
-				const nextSub = subtasks.find((t) => t.status === "todo" || t.status === "in_progress");
-				if (nextSub) {
-					lines.push(`   Next sub-task: #${nextSub.id} — ${nextSub.title}`);
-				}
+		// Group progress (if task belongs to a group)
+		if (budgetLevel !== "minimal" && activeTask.groupId !== null) {
+			const group = findGroup(store, activeTask.groupId);
+			if (group) {
+				const groupTasks = getGroupTasks(store, group.id);
+				const done = groupTasks.filter((t) => t.status === "done").length;
+				lines.push(`   Group: G${group.id} ${group.name} (${done}/${groupTasks.length} done)`);
 			}
 		}
 
@@ -147,7 +143,7 @@ export function buildTaskContext(
 	if (budgetLevel === "full" && store.activeSprintId) {
 		const sprint = store.sprints.find((s) => s.id === store.activeSprintId);
 		if (sprint) {
-			const sprintTasks = store.tasks.filter((t) => t.sprintId === sprint.id && !isGroupContainer(store, t.id));
+			const sprintTasks = store.tasks.filter((t) => t.sprintId === sprint.id);
 			const done = sprintTasks.filter((t) => t.status === "done").length;
 			lines.push(`Active sprint: ${sprint.name} (${done}/${sprintTasks.length} done)`);
 			lines.push("");
@@ -155,7 +151,7 @@ export function buildTaskContext(
 	}
 
 	// ── Archive hint ────────────────────────────────────────────
-	const doneTasks = store.tasks.filter((t) => t.status === "done" && !isGroupContainer(store, t.id));
+	const doneTasks = store.tasks.filter((t) => t.status === "done");
 	if (doneTasks.length >= 5) {
 		lines.push(`💡 ${doneTasks.length} done tasks in working set. Run \`task archive\` to clean up.`);
 		lines.push("");

@@ -6,7 +6,6 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 import type { SharedContext } from "./shared-context.js";
 import { PerFileTaskStorage } from "../storage.js";
 import { loadFromStorage, reconstructFromSession } from "../state.js";
-import { recomputeAllParentStatuses } from "../store.js";
 import { parseMarkdownTasks } from "../import/parser.js";
 import { planMerge, applyMerge } from "../import/merge.js";
 import { syncFileExists, syncPullContent, syncPush } from "../sync/file-sync.js";
@@ -16,7 +15,6 @@ export function registerSessionHooks(pi: ExtensionAPI, sc: SharedContext): void 
 	pi.on("session_start", async (_event, ctx) => {
 		sc.storage = new PerFileTaskStorage(ctx.cwd);
 		sc.store = loadFromStorage(sc.storage);
-		recomputeAllParentStatuses(sc.store);
 		sc.saveToFile(ctx);
 
 		// Auto-import from TASKS.md if no tasks exist
@@ -39,7 +37,6 @@ export function registerSessionHooks(pi: ExtensionAPI, sc: SharedContext): void 
 	pi.on("session_switch", async (_event, ctx) => {
 		sc.storage = new PerFileTaskStorage(ctx.cwd);
 		sc.store = loadFromStorage(sc.storage);
-		recomputeAllParentStatuses(sc.store);
 		sc.saveToFile(ctx);
 		sc.refreshWidgets(ctx);
 	});
@@ -47,14 +44,12 @@ export function registerSessionHooks(pi: ExtensionAPI, sc: SharedContext): void 
 	pi.on("session_tree", async (_event, ctx) => {
 		if (!sc.storage) sc.storage = new PerFileTaskStorage(ctx.cwd);
 		sc.store = reconstructFromSession(ctx, sc.storage);
-		recomputeAllParentStatuses(sc.store);
 		sc.refreshWidgets(ctx);
 	});
 
 	pi.on("session_fork", async (_event, ctx) => {
 		if (!sc.storage) sc.storage = new PerFileTaskStorage(ctx.cwd);
 		sc.store = reconstructFromSession(ctx, sc.storage);
-		recomputeAllParentStatuses(sc.store);
 		sc.refreshWidgets(ctx);
 	});
 

@@ -40,7 +40,7 @@ export function resolveBulkTargets(store: TaskStore, params: TaskActionParams): 
 	const hasFilters = params.filterStatus !== undefined
 		|| params.filterPriority !== undefined
 		|| params.filterTag !== undefined
-		|| params.filterParentId !== undefined;
+		|| params.filterGroupId !== undefined;
 
 	if (hasFilters) {
 		let result = store.tasks;
@@ -59,9 +59,9 @@ export function resolveBulkTargets(store: TaskStore, params: TaskActionParams): 
 			result = result.filter((t) => t.tags.some((tag) => tag.toLowerCase() === tagLower));
 			filterParts.push(`tag=${params.filterTag}`);
 		}
-		if (params.filterParentId !== undefined) {
-			result = result.filter((t) => t.parentId === params.filterParentId);
-			filterParts.push(`parent=#${params.filterParentId}`);
+		if (params.filterGroupId !== undefined) {
+			result = result.filter((t) => t.groupId === params.filterGroupId);
+			filterParts.push(`group=G${params.filterGroupId}`);
 		}
 
 		return {

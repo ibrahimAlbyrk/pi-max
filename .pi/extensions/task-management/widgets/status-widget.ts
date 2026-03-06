@@ -4,7 +4,7 @@
 
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { TaskStore } from "../types.js";
-import { formatElapsed, isGroupContainer } from "../store.js";
+import { formatElapsed } from "../store.js";
 import { truncate } from "../ui/helpers.js";
 
 export function updateStatusWidgets(store: TaskStore, ctx: ExtensionContext): void {
@@ -37,18 +37,16 @@ function updateActiveTaskStatus(store: TaskStore, ctx: ExtensionContext): void {
 }
 
 function updateProgressStatus(store: TaskStore, ctx: ExtensionContext): void {
-	// Count only leaf tasks — group containers are excluded from progress metrics
-	const leafTasks = store.tasks.filter((t) => !isGroupContainer(store, t.id));
-	const total = leafTasks.length;
+	const total = store.tasks.length;
 	if (total === 0) {
 		ctx.ui.setStatus("task-progress", undefined);
 		return;
 	}
 
 	const th = ctx.ui.theme;
-	const done = leafTasks.filter((t) => t.status === "done").length;
-	const inProgress = leafTasks.filter((t) => t.status === "in_progress").length;
-	const blocked = leafTasks.filter((t) => t.status === "blocked").length;
+	const done = store.tasks.filter((t) => t.status === "done").length;
+	const inProgress = store.tasks.filter((t) => t.status === "in_progress").length;
+	const blocked = store.tasks.filter((t) => t.status === "blocked").length;
 
 	let text = th.fg("success", `✓${done}`) + th.fg("dim", "/") + th.fg("text", `${total}`);
 	if (inProgress > 0) text += th.fg("accent", ` ●${inProgress}`);

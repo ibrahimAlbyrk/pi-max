@@ -3,7 +3,7 @@
  */
 
 import type { TaskStore, TaskActionParams, TaskToolResult } from "../types.js";
-import { createTask, findTask, getAllDescendants, filterTasks, formatElapsed, recalculateNextIds, isGroupContainer, updateAncestorStatuses, createLightSnapshot } from "../store.js";
+import { createTask, createGroup, findTask, findGroup, getGroupTasks, filterTasks, formatElapsed, recalculateNextIds, createLightSnapshot } from "../store.js";
 import { STATUS_ICONS, priorityLabel } from "../rendering/icons.js";
 import { toolResult as result, toolError as error, bulkResult } from "../utils/response.js";
 import { resolveBulkTargets, getMissingIds } from "../utils/bulk-targets.js";
@@ -16,8 +16,9 @@ export function handleCreate(store: TaskStore, params: TaskActionParams): TaskTo
 		return error(store, "create", "Title is required");
 	}
 
-	if (params.parentId !== undefined && !findTask(store, params.parentId)) {
-		return error(store, "create", `Parent task #${params.parentId} not found`);
+	// Validate groupId if provided
+	if (params.groupId !== undefined && !findGroup(store, params.groupId)) {
+		return error(store, "create", `Group #G${params.groupId} not found`);
 	}
 
 	const task = createTask(store, {
@@ -25,7 +26,7 @@ export function handleCreate(store: TaskStore, params: TaskActionParams): TaskTo
 		description: params.description,
 		priority: params.priority,
 		tags: params.tags,
-		parentId: params.parentId ?? null,
+		groupId: params.groupId ?? null,
 		assignee: params.assignee,
 		estimatedMinutes: params.estimatedMinutes,
 	});
@@ -33,15 +34,13 @@ export function handleCreate(store: TaskStore, params: TaskActionParams): TaskTo
 	store.tasks.push(task);
 	store.nextTaskId++;
 
-	// Auto-derive ancestor statuses if created under a parent
-	if (task.parentId !== null) {
-		updateAncestorStatuses(store, task.parentId);
-	}
-
 	const parts = [`Created #${task.id}: ${task.title}`];
 	parts.push(`Status: ${task.status} | Priority: ${task.priority}`);
 	if (task.tags.length > 0) parts.push(`Tags: ${task.tags.join(", ")}`);
-	if (task.parentId !== null) parts.push(`Parent: #${task.parentId}`);
+	if (task.groupId !== null) {
+		const group = findGroup(store, task.groupId);
+		parts.push(`Group: G${task.groupId}${group ? ` (${group.name})` : ""}`);
+	}
 	if (task.assignee) parts.push(`Assignee: ${task.assignee}`);
 	if (task.estimatedMinutes) parts.push(`Estimate: ${task.estimatedMinutes}m`);
 
@@ -70,22 +69,16 @@ export function handleGet(store: TaskStore, params: TaskActionParams): TaskToolR
 		if (task.agentName) assigneeStr += ` (@${task.agentName})`;
 		lines.push(`Assignee: ${assigneeStr}`);
 	}
-	if (task.parentId !== null) lines.push(`Parent: #${task.parentId}`);
+	if (task.groupId !== null) {
+		const group = findGroup(store, task.groupId);
+		lines.push(`Group: G${task.groupId}${group ? ` (${group.name})` : ""}`);
+	}
 	if (task.dependsOn.length > 0) lines.push(`Depends on: ${task.dependsOn.map((d) => `#${d}`).join(", ")}`);
 	if (task.estimatedMinutes !== null) lines.push(`Estimated: ${task.estimatedMinutes}m`);
 	if (task.actualMinutes !== null) lines.push(`Actual: ${task.actualMinutes}m`);
 	if (task.startedAt) lines.push(`Started: ${task.startedAt}`);
 	if (task.completedAt) lines.push(`Completed: ${task.completedAt}`);
 	lines.push(`Created: ${task.createdAt}`);
-
-	// Subtasks
-	const subtasks = store.tasks.filter((t) => t.parentId === task.id);
-	if (subtasks.length > 0) {
-		lines.push(`\nSubtasks (${subtasks.length}):`);
-		for (const st of subtasks) {
-			lines.push(`  ${STATUS_ICONS[st.status]} #${st.id} ${st.title} (${st.status})`);
-		}
-	}
 
 	// Notes
 	if (task.notes.length > 0) {
@@ -106,11 +99,11 @@ export function handleList(store: TaskStore, params: TaskActionParams): TaskTool
 		status: params.filterStatus,
 		priority: params.filterPriority,
 		tag: params.filterTag,
-		parentId: params.filterParentId,
+		groupId: params.filterGroupId,
 	});
 
 	if (filtered.length === 0) {
-		const hasFilters = params.filterStatus || params.filterPriority || params.filterTag || params.filterParentId !== undefined;
+		const hasFilters = params.filterStatus || params.filterPriority || params.filterTag || params.filterGroupId !== undefined;
 		return result(store, "list", hasFilters ? "No tasks match the given filters" : "No tasks yet");
 	}
 
@@ -171,13 +164,6 @@ export function handleUpdate(store: TaskStore, params: TaskActionParams): TaskTo
 		return error(store, "update", `Task #${params.id} not found`);
 	}
 
-	// Group container guards — block status/sprint/dependency changes
-	if (isGroupContainer(store, params.id)) {
-		if (params.status !== undefined) {
-			return error(store, "update", `Task #${params.id} is a group container. Its status is auto-derived from subtasks and cannot be changed manually.`);
-		}
-	}
-
 	const changes: string[] = [];
 
 	if (params.title !== undefined) {
@@ -205,17 +191,13 @@ export function handleUpdate(store: TaskStore, params: TaskActionParams): TaskTo
 		task.estimatedMinutes = params.estimatedMinutes;
 		changes.push(`estimate → ${task.estimatedMinutes}m`);
 	}
-	if (params.parentId !== undefined) {
-		if (params.parentId !== null && !findTask(store, params.parentId)) {
-			return error(store, "update", `Parent task #${params.parentId} not found`);
+	if (params.groupId !== undefined) {
+		if (params.groupId !== null && params.groupId !== 0 && !findGroup(store, params.groupId)) {
+			return error(store, "update", `Group #G${params.groupId} not found`);
 		}
-		const oldParentId = task.parentId;
-		task.parentId = params.parentId;
-		changes.push(`parent → ${task.parentId !== null ? `#${task.parentId}` : "none"}`);
-
-		// Re-derive both old and new parent
-		if (oldParentId !== null) updateAncestorStatuses(store, oldParentId);
-		if (task.parentId !== null) updateAncestorStatuses(store, task.parentId);
+		task.groupId = (params.groupId === 0) ? null : params.groupId;
+		const group = task.groupId !== null ? findGroup(store, task.groupId) : null;
+		changes.push(`group → ${task.groupId !== null ? `G${task.groupId} (${group?.name ?? "?"})` : "none"}`);
 	}
 
 	if (changes.length === 0) {
@@ -237,66 +219,43 @@ export function handleDelete(store: TaskStore, params: TaskActionParams): TaskTo
 		return error(store, "delete", `Task #${params.id} not found`);
 	}
 
-	const parentId = task.parentId; // save before deletion
+	// Simple delete — no cascade needed, tasks are always leaf nodes
+	store.tasks = store.tasks.filter((t) => t.id !== task.id);
 
-	// Cascade delete subtasks
-	const descendants = getAllDescendants(store, task.id);
-	const deleteIds = new Set([task.id, ...descendants.map((d) => d.id)]);
-
-	store.tasks = store.tasks.filter((t) => !deleteIds.has(t.id));
-
-	// Clean up orphan references in surviving tasks
+	// Clean up dependency references in surviving tasks
 	for (const t of store.tasks) {
-		// Remove deleted IDs from dependsOn arrays
 		if (t.dependsOn.length > 0) {
-			t.dependsOn = t.dependsOn.filter((depId) => !deleteIds.has(depId));
-		}
-		// Clear parentId if it pointed to a deleted task
-		if (t.parentId !== null && deleteIds.has(t.parentId)) {
-			t.parentId = null;
+			t.dependsOn = t.dependsOn.filter((depId) => depId !== task.id);
 		}
 	}
 
 	// Clear activeTaskId if deleted
-	if (store.activeTaskId !== null && deleteIds.has(store.activeTaskId)) {
+	if (store.activeTaskId === task.id) {
 		store.activeTaskId = null;
 	}
 
-	// Recalculate IDs after deletion (resets to 1 if no tasks remain)
+	// Recalculate IDs after deletion
 	recalculateNextIds(store);
 
-	// Auto-derive parent status (parent may have lost its last child → demoted to leaf)
-	if (parentId !== null) {
-		updateAncestorStatuses(store, parentId);
-	}
-
-	const cascadeMsg = descendants.length > 0
-		? ` (and ${descendants.length} subtask${descendants.length > 1 ? "s" : ""})`
-		: "";
-
-	return result(store, "delete", `Deleted #${task.id}: ${task.title}${cascadeMsg}`);
+	return result(store, "delete", `Deleted #${task.id}: ${task.title}`);
 }
 
 // ─── Bulk Create ─────────────────────────────────────────────────
 //
-// Batch-internal references:
-//   parentId supports negative values as batch-internal refs.
-//   -1 = first task in this batch, -2 = second, etc.
-//   This lets the agent build full parent→child hierarchies in a single call.
+// Supports compact text format where indentation defines groups:
+//   - Top-level items with indented children → group + tasks
+//   - Top-level items without children → standalone tasks
+//   - Deeper nesting is flattened into the nearest group
 //
-//   Example: [
-//     { title: "Epic" },                        // index 0 → gets real ID 10
-//     { title: "Subtask A", parentId: -1 },     // -1 → resolves to ID 10
-//     { title: "Subtask B", parentId: -1 },     // -1 → resolves to ID 10
-//     { title: "Sub-subtask", parentId: -2 },   // -2 → resolves to ID of "Subtask A"
-//   ]
+// Also supports JSON tasks array with parentId for backward compat.
+// Negative parentId values create groups: the referenced "parent" becomes a group.
 
 export function handleBulkCreate(store: TaskStore, params: TaskActionParams): TaskToolResult {
 	// Support compact text format: parse into tasks array
 	if (params.text?.trim() && (!params.tasks || params.tasks.length === 0)) {
 		const parsed = parseCompactTasks(params.text);
 		if (parsed.length === 0) {
-			return error(store, "bulk_create", "No tasks found in compact text. Use indented format:\nTitle [priority] #tag @assignee ~30m\n  Subtask title");
+			return error(store, "bulk_create", "No tasks found in compact text. Use indented format:\nGroup Name [priority] #tag\n  Task A [priority] @assignee ~30m\n  Task B");
 		}
 		params = { ...params, tasks: parsed };
 	}
@@ -305,11 +264,26 @@ export function handleBulkCreate(store: TaskStore, params: TaskActionParams): Ta
 		return error(store, "bulk_create", "Provide tasks array OR text with compact format");
 	}
 
-	const created: { id: number; title: string; parentId: number | null }[] = [];
-	// Maps batch index (1-based, referenced as negative) → assigned real task ID
+	// Detect hierarchy and convert parent items to groups
+	// parentId < 0 = batch-internal ref, parentId > 0 = existing task/group ref
+	const createdTasks: { id: number; title: string; groupId: number | null }[] = [];
+	const createdGroups: { id: number; name: string }[] = [];
+	// Maps batch index (0-based) → real task/group ID
 	const batchIdMap = new Map<number, number>();
+	const batchIsGroup = new Set<number>(); // indices that became groups
 	const skipped: string[] = [];
 
+	// First pass: identify which batch items will become groups
+	// An item becomes a group if any other item references it as parent
+	for (let i = 0; i < params.tasks.length; i++) {
+		const item = params.tasks[i];
+		if (item.parentId !== undefined && item.parentId !== null && item.parentId < 0) {
+			const refIndex = Math.abs(item.parentId) - 1;
+			batchIsGroup.add(refIndex);
+		}
+	}
+
+	// Second pass: create groups and tasks
 	for (let i = 0; i < params.tasks.length; i++) {
 		const item = params.tasks[i];
 		if (!item.title?.trim()) {
@@ -317,25 +291,43 @@ export function handleBulkCreate(store: TaskStore, params: TaskActionParams): Ta
 			continue;
 		}
 
-		// Resolve parentId: negative = batch-internal ref, positive = existing task
-		let resolvedParentId: number | null = null;
+		if (batchIsGroup.has(i)) {
+			// This item becomes a group
+			const group = createGroup(store, item.title.trim(), item.description ?? "");
+			store.groups.push(group);
+			batchIdMap.set(i, group.id);
+			store.nextGroupId++;
+			createdGroups.push({ id: group.id, name: group.name });
+			continue;
+		}
+
+		// Resolve groupId from parentId reference
+		let resolvedGroupId: number | null = null;
 		if (item.parentId !== undefined && item.parentId !== null) {
 			if (item.parentId < 0) {
-				// Batch-internal reference: -1 → index 0, -2 → index 1, etc.
+				// Batch-internal reference
 				const refIndex = Math.abs(item.parentId) - 1;
 				const realId = batchIdMap.get(refIndex);
 				if (realId === undefined) {
 					skipped.push(`[${i}] "${item.title}" — batch ref ${item.parentId} not yet created`);
 					continue;
 				}
-				resolvedParentId = realId;
+				// Check if the referenced item is a group or a task
+				if (batchIsGroup.has(refIndex)) {
+					resolvedGroupId = realId;
+				} else {
+					// Referenced item is a task — find its groupId and use the same
+					const refTask = store.tasks.find((t) => t.id === realId);
+					resolvedGroupId = refTask?.groupId ?? null;
+				}
 			} else {
-				// Positive = existing task ID
-				if (!findTask(store, item.parentId)) {
-					skipped.push(`[${i}] "${item.title}" — parent #${item.parentId} not found`);
+				// Positive = could be an existing group ID
+				if (findGroup(store, item.parentId)) {
+					resolvedGroupId = item.parentId;
+				} else {
+					skipped.push(`[${i}] "${item.title}" — group #G${item.parentId} not found`);
 					continue;
 				}
-				resolvedParentId = item.parentId;
 			}
 		}
 
@@ -344,32 +336,35 @@ export function handleBulkCreate(store: TaskStore, params: TaskActionParams): Ta
 			description: item.description,
 			priority: item.priority,
 			tags: item.tags,
-			parentId: resolvedParentId,
+			groupId: resolvedGroupId,
 			assignee: item.assignee,
 			estimatedMinutes: item.estimatedMinutes,
 		});
 
 		store.tasks.push(task);
 		batchIdMap.set(i, task.id);
-		created.push({ id: task.id, title: task.title, parentId: resolvedParentId });
+		createdTasks.push({ id: task.id, title: task.title, groupId: resolvedGroupId });
 		store.nextTaskId++;
 	}
 
-	if (created.length === 0) {
+	if (createdTasks.length === 0 && createdGroups.length === 0) {
 		const reason = skipped.length > 0 ? `\nSkipped:\n${skipped.map((s) => `  ⚠ ${s}`).join("\n")}` : "";
 		return error(store, "bulk_create", `No valid tasks to create${reason}`);
 	}
 
-	// Auto-derive ancestor statuses for all affected parents
-	const affectedParents = new Set(created.filter((c) => c.parentId !== null).map((c) => c.parentId!));
-	for (const pid of affectedParents) {
-		updateAncestorStatuses(store, pid);
+	const lines: string[] = [];
+	if (createdGroups.length > 0) {
+		lines.push(`Created ${createdGroups.length} group(s):`);
+		for (const g of createdGroups) {
+			lines.push(`  ◆ G${g.id} ${g.name}`);
+		}
 	}
-
-	const lines = [`Created ${created.length} task(s):`];
-	for (const c of created) {
-		const parentInfo = c.parentId !== null ? `  (→ #${c.parentId})` : "";
-		lines.push(`  ○ #${c.id} ${c.title}${parentInfo}`);
+	if (createdTasks.length > 0) {
+		lines.push(`Created ${createdTasks.length} task(s):`);
+		for (const c of createdTasks) {
+			const groupInfo = c.groupId !== null ? `  (→ G${c.groupId})` : "";
+			lines.push(`  ○ #${c.id} ${c.title}${groupInfo}`);
+		}
 	}
 	if (skipped.length > 0) {
 		lines.push("");
@@ -379,13 +374,10 @@ export function handleBulkCreate(store: TaskStore, params: TaskActionParams): Ta
 		}
 	}
 
-	return bulkResult(store, "bulk_create", lines.join("\n"), created.map((c) => c.id));
+	return bulkResult(store, "bulk_create", lines.join("\n"), createdTasks.map((c) => c.id));
 }
 
 // ─── Bulk Delete ─────────────────────────────────────────────────
-//
-// Delete multiple tasks by: ids array, filter params, or all (no ids/no filters).
-// Cascades subtasks for each targeted root task.
 
 export function handleBulkDelete(store: TaskStore, params: TaskActionParams): TaskToolResult {
 	const { tasks: targets, selectionLabel } = resolveBulkTargets(store, params);
@@ -394,31 +386,21 @@ export function handleBulkDelete(store: TaskStore, params: TaskActionParams): Ta
 		return error(store, "bulk_delete", `No tasks found (${selectionLabel})`);
 	}
 
-	const deleted: { id: number; title: string; descendants: number }[] = [];
+	const deleted: { id: number; title: string }[] = [];
 	const allDeleteIds = new Set<number>();
-	const affectedParents = new Set<number>();
 
 	for (const task of targets) {
-		if (allDeleteIds.has(task.id)) continue; // already queued by a parent
-
-		if (task.parentId !== null) affectedParents.add(task.parentId);
-
-		const descendants = getAllDescendants(store, task.id);
 		allDeleteIds.add(task.id);
-		for (const d of descendants) allDeleteIds.add(d.id);
-		deleted.push({ id: task.id, title: task.title, descendants: descendants.length });
+		deleted.push({ id: task.id, title: task.title });
 	}
 
 	// Remove all at once
 	store.tasks = store.tasks.filter((t) => !allDeleteIds.has(t.id));
 
-	// Clean up orphan references
+	// Clean up dependency references
 	for (const t of store.tasks) {
 		if (t.dependsOn.length > 0) {
 			t.dependsOn = t.dependsOn.filter((depId) => !allDeleteIds.has(depId));
-		}
-		if (t.parentId !== null && allDeleteIds.has(t.parentId)) {
-			t.parentId = null;
 		}
 	}
 
@@ -428,16 +410,10 @@ export function handleBulkDelete(store: TaskStore, params: TaskActionParams): Ta
 
 	recalculateNextIds(store);
 
-	for (const pid of affectedParents) {
-		if (!allDeleteIds.has(pid)) updateAncestorStatuses(store, pid);
-	}
-
 	const notFound = getMissingIds(store, params);
-	const totalDeleted = allDeleteIds.size;
-	const lines = [`Deleted ${totalDeleted} task(s) (${selectionLabel}):`];
+	const lines = [`Deleted ${deleted.length} task(s) (${selectionLabel}):`];
 	for (const d of deleted) {
-		const cascade = d.descendants > 0 ? ` (+${d.descendants} subtask${d.descendants > 1 ? "s" : ""})` : "";
-		lines.push(`  ✕ #${d.id} ${d.title}${cascade}`);
+		lines.push(`  ✕ #${d.id} ${d.title}`);
 	}
 	if (notFound.length > 0) {
 		lines.push(`Not found: ${notFound.map((id) => `#${id}`).join(", ")}`);
@@ -447,8 +423,6 @@ export function handleBulkDelete(store: TaskStore, params: TaskActionParams): Ta
 }
 
 // ─── Bulk Update ─────────────────────────────────────────────────
-//
-// Update shared fields for multiple tasks by: ids, filters, or all.
 
 export function handleBulkUpdate(store: TaskStore, params: TaskActionParams): TaskToolResult {
 	const hasFields = params.priority !== undefined || params.tags !== undefined

@@ -6,7 +6,7 @@
  */
 
 import type { Task, TaskStore } from "../types.js";
-import { formatElapsed } from "../store.js";
+import { formatElapsed, findGroup, getGroupTasks } from "../store.js";
 
 export function generateTaskHistory(task: Task, store: TaskStore): string {
 	const lines: string[] = [];
@@ -35,25 +35,16 @@ export function generateTaskHistory(task: Task, store: TaskStore): string {
 		lines.push("");
 	}
 
-	// Parent
-	if (task.parentId != null) {
-		const parent = store.tasks.find((t) => t.id === task.parentId);
-		if (parent) {
-			lines.push(`## Parent\n`);
-			lines.push(`- #${parent.id}: ${parent.title} (${parent.status})`);
+	// Group
+	if (task.groupId != null) {
+		const group = findGroup(store, task.groupId);
+		if (group) {
+			const groupTasks = getGroupTasks(store, group.id);
+			const doneCount = groupTasks.filter((t) => t.status === "done").length;
+			lines.push(`## Group\n`);
+			lines.push(`- G${group.id}: ${group.name} (${doneCount}/${groupTasks.length} done)`);
 			lines.push("");
 		}
-	}
-
-	// Subtasks
-	const subtasks = store.tasks.filter((t) => t.parentId === task.id);
-	if (subtasks.length > 0) {
-		lines.push("## Subtasks\n");
-		for (const sub of subtasks) {
-			const check = sub.status === "done" ? "[x]" : "[ ]";
-			lines.push(`- ${check} #${sub.id} ${sub.title} [${sub.priority}] — ${sub.status}`);
-		}
-		lines.push("");
 	}
 
 	// Dependencies

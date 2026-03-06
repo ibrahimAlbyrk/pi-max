@@ -3,7 +3,7 @@
  */
 
 import type { TaskStore, TaskActionParams, TaskToolResult } from "../types.js";
-import { findTask, isGroupContainer } from "../store.js";
+import { findTask } from "../store.js";
 import { toolResult as result, toolError as error } from "../utils/response.js";
 
 // ─── Cycle Detection ─────────────────────────────────────────────
@@ -37,11 +37,6 @@ export function handleAddDependency(store: TaskStore, params: TaskActionParams):
 
 	const task = findTask(store, params.id);
 	if (!task) return error(store, "add_dependency", `Task #${params.id} not found`);
-
-	// Group container guard
-	if (isGroupContainer(store, params.id)) {
-		return error(store, "add_dependency", `Task #${params.id} is a group container. Dependencies can only be set on leaf tasks.`);
-	}
 
 	const target = findTask(store, params.parentId);
 	if (!target) return error(store, "add_dependency", `Target task #${params.parentId} not found`);
@@ -80,11 +75,6 @@ export function handleRemoveDependency(store: TaskStore, params: TaskActionParam
 
 	const task = findTask(store, params.id);
 	if (!task) return error(store, "remove_dependency", `Task #${params.id} not found`);
-
-	// Group container guard
-	if (isGroupContainer(store, params.id)) {
-		return error(store, "remove_dependency", `Task #${params.id} is a group container. Dependencies can only be set on leaf tasks.`);
-	}
 
 	const idx = task.dependsOn.indexOf(params.parentId);
 	if (idx === -1) {
@@ -146,5 +136,3 @@ export function getUnmetDependencies(store: TaskStore, taskId: number): string[]
 	}
 	return unmet;
 }
-
-

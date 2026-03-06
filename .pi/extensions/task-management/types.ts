@@ -22,6 +22,15 @@ export interface TaskNote {
 	text: string;
 }
 
+// ─── Task Group ──────────────────────────────────────────────────
+
+export interface TaskGroup {
+	id: number;
+	name: string;
+	description: string;
+	createdAt: string; // ISO 8601
+}
+
 // ─── Task ────────────────────────────────────────────────────────
 
 export interface Task {
@@ -31,7 +40,7 @@ export interface Task {
 	status: TaskStatus;
 	priority: TaskPriority;
 	tags: string[];
-	parentId: number | null;
+	groupId: number | null;
 	dependsOn: number[];
 	sprintId: number | null;
 	notes: TaskNote[];
@@ -65,8 +74,10 @@ export interface Sprint {
 
 export interface TaskStore {
 	tasks: Task[];
+	groups: TaskGroup[];
 	sprints: Sprint[];
 	nextTaskId: number;
+	nextGroupId: number;
 	nextSprintId: number;
 	activeTaskId: number | null;
 	activeSprintId: number | null;
@@ -79,10 +90,14 @@ export interface TaskIndexEntry {
 	priority: TaskPriority;
 	title: string;
 	assignee: "user" | "agent" | null;
-	parentId: number | null;
+	groupId: number | null;
 	sprintId: number | null;
 	agentName: string | null;
 	agentColor: string | null;
+}
+
+export interface GroupIndexEntry {
+	name: string;
 }
 
 export interface SprintIndexEntry {
@@ -93,10 +108,12 @@ export interface SprintIndexEntry {
 export interface TaskIndex {
 	version: number;
 	nextTaskId: number;
+	nextGroupId: number;
 	nextSprintId: number;
 	activeTaskId: number | null;
 	activeSprintId: number | null;
 	tasks: Record<string, TaskIndexEntry>;
+	groups: Record<string, GroupIndexEntry>;
 	sprints: Record<string, SprintIndexEntry>;
 }
 
@@ -126,13 +143,14 @@ export interface TaskActionParams {
 	priority?: TaskPriority;
 	tags?: string[];
 	parentId?: number;
+	groupId?: number;
 	assignee?: "user" | "agent";
 	estimatedMinutes?: number;
 	text?: string;
 	filterStatus?: TaskStatus;
 	filterPriority?: TaskPriority;
 	filterTag?: string;
-	filterParentId?: number;
+	filterGroupId?: number;
 	tasks?: {
 		title: string;
 		description?: string;

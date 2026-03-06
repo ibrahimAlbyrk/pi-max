@@ -1,126 +1,136 @@
 /**
- * Hierarchy Operations — move_under, promote, flatten, cycle detection
+ * Group & Tree Operations — create_group, delete_group, rename_group, assign_group, unassign_group, tree
  */
 
 import type { TaskStore, TaskActionParams, TaskToolResult } from "../types.js";
-import { findTask, isGroupContainer, updateAncestorStatuses } from "../store.js";
+import { findTask, findGroup, getGroupTasks, createGroup, recalculateNextIds } from "../store.js";
 import { toolResult as result, toolError as error } from "../utils/response.js";
 
-// ─── Cycle Detection ─────────────────────────────────────────────
+// ─── Create Group ────────────────────────────────────────────────
 
-export function detectParentCycle(store: TaskStore, taskId: number, newParentId: number): boolean {
-	let current: number | null = newParentId;
-	while (current !== null) {
-		if (current === taskId) return true;
-		const parent = store.tasks.find((t) => t.id === current);
-		current = parent?.parentId ?? null;
+export function handleCreateGroup(store: TaskStore, params: TaskActionParams): TaskToolResult {
+	if (!params.title?.trim()) {
+		return error(store, "create_group", "Group name (title) is required");
 	}
-	return false;
+
+	const group = createGroup(store, params.title.trim(), params.description ?? "");
+	store.groups.push(group);
+	store.nextGroupId++;
+
+	return result(store, "create_group", `Created group G${group.id}: ${group.name}`);
 }
 
-// ─── Move Under ──────────────────────────────────────────────────
+// ─── Delete Group ────────────────────────────────────────────────
 
-export function handleMoveUnder(store: TaskStore, params: TaskActionParams): TaskToolResult {
+export function handleDeleteGroup(store: TaskStore, params: TaskActionParams): TaskToolResult {
 	if (params.id === undefined) {
-		return error(store, "move_under", "Task ID is required");
+		return error(store, "delete_group", "Group ID is required");
 	}
-	if (params.parentId === undefined) {
-		return error(store, "move_under", "Parent task ID (parentId) is required");
+
+	const group = findGroup(store, params.id);
+	if (!group) {
+		return error(store, "delete_group", `Group G${params.id} not found`);
+	}
+
+	// Unassign all tasks in this group (they become ungrouped, not deleted)
+	const groupTasks = getGroupTasks(store, group.id);
+	for (const task of groupTasks) {
+		task.groupId = null;
+	}
+
+	store.groups = store.groups.filter((g) => g.id !== group.id);
+	recalculateNextIds(store);
+
+	const unassignedMsg = groupTasks.length > 0
+		? ` (${groupTasks.length} task(s) moved to ungrouped)`
+		: "";
+
+	return result(store, "delete_group", `Deleted group G${group.id}: ${group.name}${unassignedMsg}`);
+}
+
+// ─── Rename Group ────────────────────────────────────────────────
+
+export function handleRenameGroup(store: TaskStore, params: TaskActionParams): TaskToolResult {
+	if (params.id === undefined) {
+		return error(store, "rename_group", "Group ID is required");
+	}
+	if (!params.title?.trim()) {
+		return error(store, "rename_group", "New name (title) is required");
+	}
+
+	const group = findGroup(store, params.id);
+	if (!group) {
+		return error(store, "rename_group", `Group G${params.id} not found`);
+	}
+
+	const oldName = group.name;
+	group.name = params.title.trim();
+	if (params.description !== undefined) {
+		group.description = params.description;
+	}
+
+	return result(store, "rename_group", `Renamed group G${group.id}: "${oldName}" → "${group.name}"`);
+}
+
+// ─── Assign Group ────────────────────────────────────────────────
+
+export function handleAssignGroup(store: TaskStore, params: TaskActionParams): TaskToolResult {
+	if (params.id === undefined) {
+		return error(store, "assign_group", "Task ID is required");
+	}
+	if (params.parentId === undefined && params.groupId === undefined) {
+		return error(store, "assign_group", "Group ID (groupId or parentId) is required");
 	}
 
 	const task = findTask(store, params.id);
-	if (!task) return error(store, "move_under", `Task #${params.id} not found`);
-
-	// Allow parentId = 0 or null to make top-level
-	if (params.parentId === 0 || params.parentId === null) {
-		const oldParentId = task.parentId;
-		task.parentId = null;
-		// Re-derive old parent (may have lost last child → demoted to leaf)
-		if (oldParentId !== null) updateAncestorStatuses(store, oldParentId);
-		return result(store, "move_under", `#${task.id} moved to top level (was under ${oldParentId !== null ? `#${oldParentId}` : "top level"})`);
+	if (!task) {
+		return error(store, "assign_group", `Task #${params.id} not found`);
 	}
 
-	const parent = findTask(store, params.parentId);
-	if (!parent) return error(store, "move_under", `Parent task #${params.parentId} not found`);
-
-	if (params.id === params.parentId) {
-		return error(store, "move_under", "Cannot move a task under itself");
+	const targetGroupId = params.groupId ?? params.parentId!;
+	const group = findGroup(store, targetGroupId);
+	if (!group) {
+		return error(store, "assign_group", `Group G${targetGroupId} not found`);
 	}
 
-	if (detectParentCycle(store, params.id, params.parentId)) {
-		return error(store, "move_under", `Cycle detected: #${params.parentId} is a descendant of #${params.id}`);
-	}
+	const oldGroupId = task.groupId;
+	task.groupId = group.id;
 
-	const oldParentId = task.parentId;
-	task.parentId = params.parentId;
+	const fromStr = oldGroupId !== null
+		? `G${oldGroupId}`
+		: "ungrouped";
 
-	// Re-derive old parent (may have lost last child → demoted to leaf)
-	if (oldParentId !== null) updateAncestorStatuses(store, oldParentId);
-	// Re-derive new parent (new child changes derived status)
-	updateAncestorStatuses(store, params.parentId);
-
-	const text = `#${task.id} moved under #${params.parentId} (${parent.title})`;
-
-	return result(store, "move_under", text);
+	return result(store, "assign_group", `#${task.id} moved to G${group.id} (${group.name}) from ${fromStr}`);
 }
 
-// ─── Promote ─────────────────────────────────────────────────────
+// ─── Unassign Group ──────────────────────────────────────────────
 
-export function handlePromote(store: TaskStore, params: TaskActionParams): TaskToolResult {
+export function handleUnassignGroup(store: TaskStore, params: TaskActionParams): TaskToolResult {
 	if (params.id === undefined) {
-		return error(store, "promote", "Task ID is required");
+		return error(store, "unassign_group", "Task ID is required");
 	}
 
 	const task = findTask(store, params.id);
-	if (!task) return error(store, "promote", `Task #${params.id} not found`);
-
-	if (task.parentId === null) {
-		return error(store, "promote", `Task #${task.id} is already at top level`);
+	if (!task) {
+		return error(store, "unassign_group", `Task #${params.id} not found`);
 	}
 
-	const oldParentId = task.parentId;
-	const parent = findTask(store, task.parentId);
-	const grandparentId = parent?.parentId ?? null;
-
-	task.parentId = grandparentId;
-
-	// Re-derive old parent (may have lost last child)
-	if (oldParentId !== null) updateAncestorStatuses(store, oldParentId);
-	// Re-derive new parent (grandparent)
-	if (grandparentId !== null) updateAncestorStatuses(store, grandparentId);
-
-	const dest = grandparentId !== null ? `under #${grandparentId}` : "top level";
-	return result(store, "promote", `#${task.id} promoted to ${dest}`);
-}
-
-// ─── Flatten ─────────────────────────────────────────────────────
-
-export function handleFlatten(store: TaskStore, params: TaskActionParams): TaskToolResult {
-	if (params.id === undefined) {
-		return error(store, "flatten", "Task ID is required");
+	if (task.groupId === null) {
+		return error(store, "unassign_group", `Task #${task.id} is not in any group`);
 	}
 
-	const task = findTask(store, params.id);
-	if (!task) return error(store, "flatten", `Task #${params.id} not found`);
+	const oldGroupId = task.groupId;
+	const group = findGroup(store, oldGroupId);
+	task.groupId = null;
 
-	if (task.parentId === null) {
-		return error(store, "flatten", `Task #${task.id} is already at top level`);
-	}
-
-	const oldParentId = task.parentId;
-	task.parentId = null;
-
-	// Re-derive old parent (may have lost last child)
-	if (oldParentId !== null) updateAncestorStatuses(store, oldParentId);
-
-	return result(store, "flatten", `#${task.id} flattened to top level`);
+	return result(store, "unassign_group", `#${task.id} removed from G${oldGroupId}${group ? ` (${group.name})` : ""}`);
 }
 
 // ─── Tree View ───────────────────────────────────────────────────
 
 export function handleTree(store: TaskStore, _params: TaskActionParams): TaskToolResult {
-	if (store.tasks.length === 0) {
-		return result(store, "tree", "No tasks");
+	if (store.tasks.length === 0 && store.groups.length === 0) {
+		return result(store, "tree", "No tasks or groups");
 	}
 
 	const lines = renderTreeText(store);
@@ -129,38 +139,48 @@ export function handleTree(store: TaskStore, _params: TaskActionParams): TaskToo
 
 export function renderTreeText(store: TaskStore): string[] {
 	const lines: string[] = [];
-	const rootTasks = store.tasks.filter((t) => t.parentId === null);
 
-	for (const root of rootTasks) {
-		renderNode(store, root, lines, "", true);
+	// Render groups with their tasks
+	for (const group of store.groups) {
+		const tasks = getGroupTasks(store, group.id);
+		const doneCount = tasks.filter((t) => t.status === "done").length;
+		const progressStr = tasks.length > 0 ? ` (${doneCount}/${tasks.length} done)` : " (empty)";
+
+		lines.push(`◆ G${group.id} ${group.name}${progressStr}`);
+
+		for (let i = 0; i < tasks.length; i++) {
+			const task = tasks[i];
+			const isLast = i === tasks.length - 1;
+			const connector = isLast ? "└── " : "├── ";
+			const statusIcon = getStatusIcon(task.status);
+			const pri = task.priority[0].toUpperCase();
+
+			lines.push(`   ${connector}${statusIcon} #${task.id} [${pri}] ${task.title}  ${task.status}`);
+		}
+	}
+
+	// Render ungrouped tasks
+	const ungrouped = store.tasks.filter((t) => t.groupId === null);
+	if (ungrouped.length > 0) {
+		if (store.groups.length > 0) {
+			lines.push("");
+			lines.push("(ungrouped)");
+		}
+		for (const task of ungrouped) {
+			const statusIcon = getStatusIcon(task.status);
+			const pri = task.priority[0].toUpperCase();
+			lines.push(`${statusIcon} #${task.id} [${pri}] ${task.title}  ${task.status}`);
+		}
 	}
 
 	return lines;
 }
 
-function renderNode(store: TaskStore, task: typeof store.tasks[0], lines: string[], prefix: string, isLast: boolean): void {
-	const connector = prefix === "" ? "" : isLast ? "└── " : "├── ";
-	const statusIcon = task.status === "done" ? "✓" : task.status === "in_progress" ? "●" : task.status === "blocked" ? "⊘" : "○";
-	const pri = task.priority[0].toUpperCase();
-
-	const children = store.tasks.filter((t) => t.parentId === task.id);
-	const hasChildren = children.length > 0;
-
-	// Group containers show ⟳ prefix on status and (done/total) counter
-	let statusText: string;
-	if (hasChildren) {
-		const doneCount = children.filter((c) => c.status === "done").length;
-		statusText = `⟳ ${task.status} (${doneCount}/${children.length})`;
-	} else {
-		statusText = task.status;
-	}
-
-	lines.push(`${prefix}${connector}${statusIcon} #${task.id} [${pri}] ${task.title}  ${statusText}`);
-
-	const childPrefix = prefix + (prefix === "" ? "" : isLast ? "    " : "│   ");
-	for (let i = 0; i < children.length; i++) {
-		renderNode(store, children[i], lines, childPrefix === "" ? "   " : childPrefix, i === children.length - 1);
+function getStatusIcon(status: string): string {
+	switch (status) {
+		case "done": return "✓";
+		case "in_progress": return "●";
+		case "blocked": return "⊘";
+		default: return "○";
 	}
 }
-
-

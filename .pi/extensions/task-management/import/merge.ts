@@ -92,10 +92,30 @@ export function applyMerge(store: TaskStore, plan: MergePlan): { created: number
 			estimatedMinutes: parsed.estimatedMinutes,
 		});
 
-		// Resolve parent by title
+		// Resolve parent by title → find or create a group
 		if (parsed.parentTitle) {
-			const parentId = titleToId.get(parsed.parentTitle.toLowerCase().trim());
-			if (parentId != null) task.parentId = parentId;
+			const parentTitle = parsed.parentTitle.toLowerCase().trim();
+			// Check if a group with this name already exists
+			let group = store.groups.find((g) => g.name.toLowerCase().trim() === parentTitle);
+			if (!group) {
+				// Check if a task with this title exists and could be a group
+				const parentTaskId = titleToId.get(parentTitle);
+				if (parentTaskId != null) {
+					// Convert existing task to group reference
+					const parentTask = store.tasks.find((t) => t.id === parentTaskId);
+					if (parentTask) {
+						group = {
+							id: store.nextGroupId,
+							name: parentTask.title,
+							description: parentTask.description || "",
+							createdAt: parentTask.createdAt,
+						};
+						store.groups.push(group);
+						store.nextGroupId++;
+					}
+				}
+			}
+			if (group) task.groupId = group.id;
 		}
 
 		store.tasks.push(task);

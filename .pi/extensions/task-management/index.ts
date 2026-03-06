@@ -17,7 +17,7 @@ import { Type } from "@sinclair/typebox";
 import { Key } from "@mariozechner/pi-tui";
 
 import type { TaskStore, TaskActionParams, TaskToolResult } from "./types.js";
-import { createDefaultStore, createTask, createLightSnapshot, findTask, recalculateNextIds, assignAgentToTask, unassignAgentFromTask } from "./store.js";
+import { createDefaultStore, createTask, createLightSnapshot, findTask, findGroup, recalculateNextIds, assignAgentToTask, unassignAgentFromTask } from "./store.js";
 import type { AgentAssignment } from "./store.js";
 import { PerFileTaskStorage, type TaskStorage } from "./storage.js";
 import { persistToStorage } from "./state.js";
@@ -26,7 +26,7 @@ import { persistToStorage } from "./state.js";
 import { handleCreate, handleGet, handleList, handleUpdate, handleDelete, handleBulkCreate, handleBulkDelete, handleBulkUpdate } from "./actions/crud.js";
 import { handleSetStatus, handleStart, handleComplete, handleBlock, handleUnblock, handleBulkSetStatus } from "./actions/status.js";
 import { handleAddNote } from "./actions/notes.js";
-import { handleMoveUnder, handlePromote, handleFlatten, handleTree } from "./hierarchy/tree-ops.js";
+import { handleCreateGroup, handleDeleteGroup, handleRenameGroup, handleAssignGroup, handleUnassignGroup, handleTree } from "./hierarchy/tree-ops.js";
 import { handleAddDependency, handleRemoveDependency, handleCheckDependencies } from "./dependencies/dep-ops.js";
 import {
 	handleCreateSprint, handleStartSprint, handleCompleteSprint,
@@ -229,7 +229,7 @@ export default function taskManagementExtension(pi: ExtensionAPI) {
 		"create", "get", "list", "update", "delete",
 		"set_status", "start", "complete", "block", "unblock",
 		"add_note", "bulk_create", "bulk_delete", "bulk_update", "bulk_set_status", "bulk_assign_sprint",
-		"move_under", "promote", "flatten", "tree",
+		"create_group", "delete_group", "rename_group", "assign_group", "unassign_group", "tree",
 		"add_dependency", "remove_dependency", "check_dependencies",
 		"create_sprint", "start_sprint", "complete_sprint",
 		"assign_sprint", "unassign_sprint", "sprint_status", "list_sprints",
@@ -248,30 +248,31 @@ export default function taskManagementExtension(pi: ExtensionAPI) {
 		status: Type.Optional(StringEnum(["todo", "in_progress", "in_review", "blocked", "deferred", "done"] as const)),
 		priority: Type.Optional(StringEnum(["critical", "high", "medium", "low"] as const)),
 		tags: Type.Optional(Type.Array(Type.String(), { description: "Tags for categorization" })),
-		parentId: Type.Optional(Type.Number({ description: "Parent task ID, dependency target, or sprint ID (context-dependent)" })),
+		parentId: Type.Optional(Type.Number({ description: "Dependency target ID or sprint ID (context-dependent)" })),
+		groupId: Type.Optional(Type.Number({ description: "Task group ID for create/update/assign_group operations" })),
 		assignee: Type.Optional(StringEnum(["user", "agent"] as const)),
 		estimatedMinutes: Type.Optional(Type.Number({ description: "Estimated time in minutes, or minutes to log" })),
 		text: Type.Optional(Type.String({ description: "Note text, block reason, or analysis prompt" })),
 		filterStatus: Type.Optional(StringEnum(["todo", "in_progress", "in_review", "blocked", "deferred", "done"] as const)),
 		filterPriority: Type.Optional(StringEnum(["critical", "high", "medium", "low"] as const)),
 		filterTag: Type.Optional(Type.String({ description: "Filter by tag" })),
-		filterParentId: Type.Optional(Type.Number({ description: "Filter by parent task ID" })),
+		filterGroupId: Type.Optional(Type.Number({ description: "Filter by group ID" })),
 		tasks: Type.Optional(Type.Array(Type.Object({
 			title: Type.String(),
 			description: Type.Optional(Type.String()),
 			priority: Type.Optional(StringEnum(["critical", "high", "medium", "low"] as const)),
 			tags: Type.Optional(Type.Array(Type.String())),
-			parentId: Type.Optional(Type.Number({ description: "Positive: existing task ID. Negative: batch-internal ref (-1=1st task in batch, -2=2nd, etc.)" })),
+			parentId: Type.Optional(Type.Number({ description: "Negative batch-internal ref: items with children become groups, children become tasks. -1=1st item, -2=2nd, etc." })),
 			assignee: Type.Optional(StringEnum(["user", "agent"] as const)),
 			estimatedMinutes: Type.Optional(Type.Number()),
-		}), { description: "Array of tasks for bulk_create. Use negative parentId for batch-internal parent refs: -1=first task in batch, -2=second, etc." })),
+		}), { description: "Array of tasks for bulk_create. Indented items (via parentId refs) auto-create groups for parent items." })),
 	});
 
 	const MUTATING_ACTIONS = new Set([
 		"create", "update", "delete", "set_status", "start",
 		"complete", "block", "unblock", "add_note", "bulk_create",
 		"bulk_delete", "bulk_update", "bulk_set_status", "bulk_assign_sprint",
-		"move_under", "promote", "flatten",
+		"create_group", "delete_group", "rename_group", "assign_group", "unassign_group",
 		"add_dependency", "remove_dependency",
 		"create_sprint", "start_sprint", "complete_sprint",
 		"assign_sprint", "unassign_sprint", "log_time",
@@ -288,22 +289,23 @@ export default function taskManagementExtension(pi: ExtensionAPI) {
 ## Workflow — ALWAYS follow this pattern:
 1. PLAN first: Break work into discrete, trackable tasks BEFORE writing code.
 2. CREATE tasks in bulk: Use bulk_create with text param (compact format, ~5x faster than JSON):
-   bulk_create text="Epic [high] #backend\n  Subtask A [high] @agent ~30m\n  Subtask B\n    Sub-subtask"
-   Rules: indent=hierarchy, [priority], #tag, @assignee, ~time, > description line
+   bulk_create text="Group Name [high] #backend\n  Task A [high] @agent ~30m\n  Task B"
+   Rules: indent=hierarchy (top-level with children become groups), [priority], #tag, @assignee, ~time, > description line
 3. START a task: Call start before working on it (sets active context).
 4. WORK on it: Write code, run tests — one task at a time.
 5. COMPLETE it: Call complete when done, then start the next.
 
-## Task Granularity:
-- Each task = ONE concrete deliverable (a function, an endpoint, a component, a fix).
-- Parent tasks = epics/features grouping related subtasks.
-- If a task takes >30 min or has multiple steps, split it into subtasks.
+## Task Groups:
+- Groups (G1, G2, ...) are organizational containers — they have NO status and cannot be started/completed.
+- Tasks (#1, #2, ...) are always actionable work items — every task can be started and completed.
+- Use groups to organize related tasks (e.g., "Backend API", "Authentication").
+- Progress is shown per group: "G1 Backend API (3/5 done)".
 
 ## Actions Reference:
 CRUD: create, get, list, update, delete, bulk_create
 Bulk: bulk_delete (ids), bulk_set_status (ids+status), bulk_update (ids+fields), bulk_assign_sprint (ids+parentId)
 Status: set_status, start, complete, block, unblock
-Hierarchy: move_under (id + parentId), promote (id), flatten (id), tree
+Groups: create_group (title), delete_group (id), rename_group (id+title), assign_group (id+groupId), unassign_group (id), tree
 Dependencies: add_dependency (id depends on parentId), remove_dependency, check_dependencies
 Sprints: create_sprint, start_sprint, complete_sprint, assign_sprint (id=task, parentId=sprint), unassign_sprint, sprint_status, list_sprints
 Time: log_time (id, estimatedMinutes=minutes to add), add_note (id, text)
@@ -350,9 +352,11 @@ Examples:
 				case "bulk_update": result = handleBulkUpdate(store, p); break;
 				case "bulk_set_status": result = handleBulkSetStatus(store, p); break;
 				case "bulk_assign_sprint": result = handleBulkAssignSprint(store, p); break;
-				case "move_under": result = handleMoveUnder(store, p); break;
-				case "promote": result = handlePromote(store, p); break;
-				case "flatten": result = handleFlatten(store, p); break;
+				case "create_group": result = handleCreateGroup(store, p); break;
+				case "delete_group": result = handleDeleteGroup(store, p); break;
+				case "rename_group": result = handleRenameGroup(store, p); break;
+				case "assign_group": result = handleAssignGroup(store, p); break;
+				case "unassign_group": result = handleUnassignGroup(store, p); break;
 				case "tree": result = handleTree(store, p); break;
 				case "add_dependency": result = handleAddDependency(store, p); break;
 				case "remove_dependency": result = handleRemoveDependency(store, p); break;
@@ -432,7 +436,7 @@ Examples:
 			if (MUTATING_ACTIONS.has(p.action)) {
 				const singleTaskActions = new Set([
 					"update", "set_status", "start", "complete", "block", "unblock",
-					"add_note", "move_under", "promote", "flatten",
+					"add_note", "assign_group", "unassign_group",
 					"add_dependency", "remove_dependency",
 					"assign_sprint", "unassign_sprint", "log_time",
 				]);
@@ -461,6 +465,16 @@ Examples:
 					const sprint = store.sprints.find((s) => s.id === sprintId);
 					if (sprint && storage) storage.saveSprint(sprint, store);
 					else saveToFile();
+				} else if (p.action === "create_group") {
+					const newGroup = store.groups[store.groups.length - 1];
+					if (newGroup && storage) storage.saveGroup(newGroup, store);
+					else saveToFile();
+				} else if (p.action === "rename_group" && p.id !== undefined) {
+					const group = store.groups.find((g) => g.id === p.id);
+					if (group && storage) storage.saveGroup(group, store);
+					else saveToFile();
+				} else if (p.action === "delete_group") {
+					saveToFile();
 				} else {
 					saveToFile();
 				}

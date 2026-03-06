@@ -3,15 +3,10 @@
  */
 
 import type { TaskStore, TaskActionParams, TaskToolResult, TaskStatus } from "../types.js";
-import { findTask, formatElapsed, isGroupContainer, updateAncestorStatuses } from "../store.js";
+import { findTask, formatElapsed } from "../store.js";
 import { getUnmetDependencies } from "../dependencies/dep-ops.js";
 import { toolResult as result, toolError as error, bulkResult } from "../utils/response.js";
 import { resolveBulkTargets, getMissingIds } from "../utils/bulk-targets.js";
-
-// ─── Group Container Guard ───────────────────────────────────────
-
-const GROUP_CONTAINER_MSG = (id: number) =>
-	`Task #${id} is a group container. Its status is auto-derived from subtasks and cannot be changed manually.`;
 
 // ─── Set Status ──────────────────────────────────────────────────
 
@@ -26,11 +21,6 @@ export function handleSetStatus(store: TaskStore, params: TaskActionParams): Tas
 	const task = findTask(store, params.id);
 	if (!task) {
 		return error(store, "set_status", `Task #${params.id} not found`);
-	}
-
-	// Group container guard
-	if (isGroupContainer(store, params.id)) {
-		return error(store, "set_status", GROUP_CONTAINER_MSG(params.id));
 	}
 
 	const oldStatus = task.status;
@@ -48,9 +38,6 @@ export function handleSetStatus(store: TaskStore, params: TaskActionParams): Tas
 	if (params.status === "in_progress" && !task.startedAt) {
 		task.startedAt = new Date().toISOString();
 	}
-
-	// Auto-derive ancestor statuses
-	updateAncestorStatuses(store, task.parentId);
 
 	let text = `#${task.id}: ${oldStatus} → ${task.status}`;
 	if (warning) text += `\nWarning: ${warning}`;
@@ -70,11 +57,6 @@ export function handleStart(store: TaskStore, params: TaskActionParams): TaskToo
 		return error(store, "start", `Task #${params.id} not found`);
 	}
 
-	// Group container guard
-	if (isGroupContainer(store, params.id)) {
-		return error(store, "start", GROUP_CONTAINER_MSG(params.id));
-	}
-
 	if (task.status !== "todo" && task.status !== "deferred") {
 		return error(store, "start", `Cannot start task #${task.id} — current status is "${task.status}" (expected "todo" or "deferred")`);
 	}
@@ -83,9 +65,6 @@ export function handleStart(store: TaskStore, params: TaskActionParams): TaskToo
 	task.status = "in_progress";
 	task.startedAt = new Date().toISOString();
 	store.activeTaskId = task.id;
-
-	// Auto-derive ancestor statuses
-	updateAncestorStatuses(store, task.parentId);
 
 	// Warn about unmet dependencies (but don't block)
 	const unmet = getUnmetDependencies(store, task.id);
@@ -107,11 +86,6 @@ export function handleComplete(store: TaskStore, params: TaskActionParams): Task
 	const task = findTask(store, params.id);
 	if (!task) {
 		return error(store, "complete", `Task #${params.id} not found`);
-	}
-
-	// Group container guard
-	if (isGroupContainer(store, params.id)) {
-		return error(store, "complete", GROUP_CONTAINER_MSG(params.id));
 	}
 
 	if (task.status === "done") {
@@ -142,9 +116,6 @@ export function handleComplete(store: TaskStore, params: TaskActionParams): Task
 		store.activeTaskId = null;
 	}
 
-	// Auto-derive ancestor statuses
-	updateAncestorStatuses(store, task.parentId);
-
 	let text = `Completed #${task.id}: ${task.title} (${oldStatus} → done)`;
 	if (task.actualMinutes !== null) {
 		text += `\nTime spent: ${formatElapsed(task.actualMinutes * 60000)}`;
@@ -168,11 +139,6 @@ export function handleBlock(store: TaskStore, params: TaskActionParams): TaskToo
 		return error(store, "block", `Task #${params.id} not found`);
 	}
 
-	// Group container guard
-	if (isGroupContainer(store, params.id)) {
-		return error(store, "block", GROUP_CONTAINER_MSG(params.id));
-	}
-
 	if (task.status === "done") {
 		return error(store, "block", `Cannot block a completed task (#${task.id})`);
 	}
@@ -185,9 +151,6 @@ export function handleBlock(store: TaskStore, params: TaskActionParams): TaskToo
 		author: "agent",
 		text: `Blocked: ${params.text.trim()}`,
 	});
-
-	// Auto-derive ancestor statuses
-	updateAncestorStatuses(store, task.parentId);
 
 	return result(store, "block", `Blocked #${task.id}: ${task.title} (${oldStatus} → blocked)\nReason: ${params.text.trim()}`);
 }
@@ -204,11 +167,6 @@ export function handleUnblock(store: TaskStore, params: TaskActionParams): TaskT
 		return error(store, "unblock", `Task #${params.id} not found`);
 	}
 
-	// Group container guard
-	if (isGroupContainer(store, params.id)) {
-		return error(store, "unblock", GROUP_CONTAINER_MSG(params.id));
-	}
-
 	if (task.status !== "blocked") {
 		return error(store, "unblock", `Task #${task.id} is not blocked (current status: "${task.status}")`);
 	}
@@ -222,9 +180,6 @@ export function handleUnblock(store: TaskStore, params: TaskActionParams): TaskT
 		author: "agent",
 		text: "Unblocked",
 	});
-
-	// Auto-derive ancestor statuses
-	updateAncestorStatuses(store, task.parentId);
 
 	return result(store, "unblock", `Unblocked #${task.id}: ${task.title} (blocked → ${newStatus})`);
 }
@@ -256,10 +211,6 @@ function validateTransition(from: TaskStatus, to: TaskStatus): string | null {
 }
 
 // ─── Bulk Set Status ─────────────────────────────────────────────
-//
-// Change status of multiple tasks by: ids, filters, or all (no ids/no filters).
-// Supports all statuses including "done" (acts as bulk complete with timestamps).
-// Skips group containers and already-matching statuses.
 
 export function handleBulkSetStatus(store: TaskStore, params: TaskActionParams): TaskToolResult {
 	if (!params.status) {
@@ -277,12 +228,6 @@ export function handleBulkSetStatus(store: TaskStore, params: TaskActionParams):
 	const skipped: { id: number; reason: string }[] = [];
 
 	for (const task of targets) {
-		// Skip group containers
-		if (isGroupContainer(store, task.id)) {
-			skipped.push({ id: task.id, reason: "group container (auto-derived)" });
-			continue;
-		}
-
 		// Skip already in target status
 		if (task.status === targetStatus) {
 			skipped.push({ id: task.id, reason: `already ${targetStatus}` });
@@ -313,7 +258,6 @@ export function handleBulkSetStatus(store: TaskStore, params: TaskActionParams):
 			if (store.activeTaskId === task.id) store.activeTaskId = null;
 		}
 
-		updateAncestorStatuses(store, task.parentId);
 		changed.push({ id: task.id, title: task.title, from: oldStatus, to: targetStatus });
 	}
 
@@ -336,5 +280,3 @@ export function handleBulkSetStatus(store: TaskStore, params: TaskActionParams):
 
 	return bulkResult(store, "bulk_set_status", lines.join("\n"), changed.map((c) => c.id));
 }
-
-

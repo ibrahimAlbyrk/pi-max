@@ -3,7 +3,7 @@
  */
 
 import type { TaskStore, TaskActionParams, TaskToolResult, Sprint } from "../types.js";
-import { findTask, formatElapsed, recalculateNextIds, isGroupContainer } from "../store.js";
+import { findTask, formatElapsed, recalculateNextIds } from "../store.js";
 import { toolResult as result, toolError as error, bulkResult } from "../utils/response.js";
 import { resolveBulkTargets, getMissingIds } from "../utils/bulk-targets.js";
 import { formatDateShort as formatDate } from "../ui/helpers.js";
@@ -139,11 +139,6 @@ export function handleAssignSprint(store: TaskStore, params: TaskActionParams): 
 	const task = findTask(store, params.id);
 	if (!task) return error(store, "assign_sprint", `Task #${params.id} not found`);
 
-	// Group container guard
-	if (isGroupContainer(store, params.id)) {
-		return error(store, "assign_sprint", `Task #${params.id} is a group container. Only leaf tasks can be assigned to sprints.`);
-	}
-
 	const sprint = store.sprints.find((s) => s.id === sprintId);
 	if (!sprint) return error(store, "assign_sprint", `Sprint #S${sprintId} not found`);
 
@@ -275,11 +270,6 @@ export function handleBulkAssignSprint(store: TaskStore, params: TaskActionParam
 	const skipped: { id: number; reason: string }[] = [];
 
 	for (const task of targets) {
-		if (isGroupContainer(store, task.id)) {
-			skipped.push({ id: task.id, reason: "group container" });
-			continue;
-		}
-
 		if (task.sprintId === sprintId) {
 			skipped.push({ id: task.id, reason: `already in #S${sprintId}` });
 			continue;

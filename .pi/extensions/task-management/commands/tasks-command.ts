@@ -4,21 +4,20 @@
 
 import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import type { TaskStore, Task, TaskStatus, TaskPriority } from "../types.js";
+import type { TaskStore, Task, TaskGroup, TaskStatus, TaskPriority } from "../types.js";
 import { STATUS_ICONS, PRIORITY_COLORS, priorityLabel } from "../rendering/icons.js";
-import { findTask, formatElapsed, isGroupContainer } from "../store.js";
+import { findTask, findGroup, formatElapsed, getGroupTasks } from "../store.js";
 import { showTaskDetailOverlay } from "./task-detail-command.js";
 import { PRIORITY_ORDER } from "../ui/helpers.js";
 
 // ─── Overlay Component ──────────────────────────────────────────
 
-interface TaskEntry {
-	task: Task;
-	depth: number;
-}
+type ListEntry =
+	| { type: "task"; task: Task; depth: number }
+	| { type: "group-header"; group: TaskGroup; doneCount: number; totalCount: number };
 
 class TaskListOverlay {
-	private entries: TaskEntry[];
+	private entries: ListEntry[];
 	private selectedIndex: number = 0;
 	private scrollOffset: number = 0;
 	private theme: Theme;
@@ -26,13 +25,13 @@ class TaskListOverlay {
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 
-	constructor(tasks: Task[], theme: Theme, onClose: (selectedId: number | null) => void, initialSelectedId?: number) {
-		this.entries = this.buildHierarchicalList(tasks);
+	constructor(tasks: Task[], store: TaskStore, theme: Theme, onClose: (selectedId: number | null) => void, initialSelectedId?: number) {
+		this.entries = this.buildList(tasks, store);
 		this.theme = theme;
 		this.onClose = onClose;
 
 		if (initialSelectedId !== undefined) {
-			const idx = this.entries.findIndex((e) => e.task.id === initialSelectedId);
+			const idx = this.entries.findIndex((e) => e.type === "task" && e.task.id === initialSelectedId);
 			if (idx >= 0) {
 				this.selectedIndex = idx;
 				const maxVisible = 20;
@@ -58,34 +57,44 @@ class TaskListOverlay {
 		});
 	}
 
-	private buildHierarchicalList(tasks: Task[]): TaskEntry[] {
-		const taskSet = new Set(tasks.map((t) => t.id));
-		const childrenMap = new Map<number | null, Task[]>();
+	private buildList(tasks: Task[], store: TaskStore): ListEntry[] {
+		const result: ListEntry[] = [];
 
+		// Group tasks by groupId
+		const grouped = new Map<number | null, Task[]>();
 		for (const t of tasks) {
-			// If parent is in the list, group under it; otherwise treat as root
-			const parentKey = t.parentId !== null && taskSet.has(t.parentId) ? t.parentId : null;
-			const siblings = childrenMap.get(parentKey) || [];
-			siblings.push(t);
-			childrenMap.set(parentKey, siblings);
+			const key = t.groupId;
+			const list = grouped.get(key) || [];
+			list.push(t);
+			grouped.set(key, list);
 		}
 
-		const roots = this.sortByStatusAndPriority(childrenMap.get(null) || []);
-		const result: TaskEntry[] = [];
+		// Show grouped tasks with headers
+		const groupIds = Array.from(grouped.keys()).filter((k) => k !== null) as number[];
+		for (const gid of groupIds) {
+			const group = findGroup(store, gid);
+			const groupTasks = grouped.get(gid) || [];
+			const sortedTasks = this.sortByStatusAndPriority(groupTasks);
+			const doneCount = groupTasks.filter((t) => t.status === "done").length;
 
-		const addWithChildren = (task: Task, depth: number) => {
-			result.push({ task, depth });
-			const children = childrenMap.get(task.id);
-			if (children) {
-				const sorted = this.sortByStatusAndPriority(children);
-				for (const child of sorted) {
-					addWithChildren(child, depth + 1);
-				}
+			if (group) {
+				result.push({
+					type: "group-header",
+					group,
+					doneCount,
+					totalCount: groupTasks.length,
+				});
 			}
-		};
 
-		for (const root of roots) {
-			addWithChildren(root, 0);
+			for (const task of sortedTasks) {
+				result.push({ type: "task", task, depth: group ? 1 : 0 });
+			}
+		}
+
+		// Show ungrouped tasks
+		const ungrouped = this.sortByStatusAndPriority(grouped.get(null) || []);
+		for (const task of ungrouped) {
+			result.push({ type: "task", task, depth: 0 });
 		}
 
 		return result;
@@ -115,7 +124,10 @@ class TaskListOverlay {
 
 		if (matchesKey(data, "return")) {
 			const entry = this.entries[this.selectedIndex];
-			if (entry) this.onClose(entry.task.id);
+			// Only open detail for tasks, not group headers
+			if (entry && entry.type === "task") {
+				this.onClose(entry.task.id);
+			}
 			return;
 		}
 	}
@@ -132,10 +144,10 @@ class TaskListOverlay {
 		// ── Build content lines ──
 		const contentLines: string[] = [];
 
-		// Status summary — count only leaf tasks (exclude group containers)
+		// Status summary — count only tasks, not headers
 		const counts: Record<string, number> = {};
 		for (const e of this.entries) {
-			if (!this.isGroupTask(e.task)) {
+			if (e.type === "task") {
 				counts[e.task.status] = (counts[e.task.status] || 0) + 1;
 			}
 		}
@@ -162,8 +174,12 @@ class TaskListOverlay {
 				const entry = visible[i];
 				const globalIndex = this.scrollOffset + i;
 				const isSelected = globalIndex === this.selectedIndex;
-				const line = this.renderTaskLine(entry.task, isSelected, innerWidth, entry.depth);
-				contentLines.push(line);
+
+				if (entry.type === "group-header") {
+					contentLines.push(this.renderGroupHeader(entry, isSelected, innerWidth));
+				} else {
+					contentLines.push(this.renderTaskLine(entry.task, isSelected, innerWidth, entry.depth));
+				}
 			}
 
 			if (this.entries.length > maxVisible) {
@@ -225,9 +241,19 @@ class TaskListOverlay {
 		return lines;
 	}
 
+	private renderGroupHeader(entry: Extract<ListEntry, { type: "group-header" }>, isSelected: boolean, innerWidth: number): string {
+		const th = this.theme;
+		const selectionIndicator = isSelected ? th.fg("accent", "▸ ") : "  ";
+		const icon = th.fg("accent", "◆");
+		const label = th.fg("accent", `G${entry.group.id}`);
+		const name = th.fg("text", th.bold(entry.group.name));
+		const progress = th.fg("dim", `(${entry.doneCount}/${entry.totalCount} done)`);
+		const raw = `${selectionIndicator}${icon} ${label} ${name} ${progress}`;
+		return this.padInner(truncateToWidth(raw, innerWidth), innerWidth);
+	}
+
 	private renderTaskLine(task: Task, isSelected: boolean, innerWidth: number, depth: number = 0): string {
 		const th = this.theme;
-		const isGroup = this.isGroupTask(task);
 
 		const icon = STATUS_ICONS[task.status];
 		const statusIcon = task.status === "done" ? th.fg("success", icon)
@@ -240,33 +266,17 @@ class TaskListOverlay {
 		const title = task.status === "done" ? th.fg("dim", task.title) : th.fg("text", task.title);
 
 		let extra = "";
-		if (isGroup) {
-			// Show (done/total) counter for group containers
-			const children = this.getChildren(task.id);
-			const doneCount = children.filter((c) => c.status === "done").length;
-			extra = th.fg("muted", ` ⟳ (${doneCount}/${children.length})`);
-		} else if (task.status === "in_progress" && task.startedAt) {
+		if (task.status === "in_progress" && task.startedAt) {
 			const elapsed = Date.now() - new Date(task.startedAt).getTime();
 			extra = th.fg("dim", ` (${formatElapsed(elapsed)})`);
 		} else if (task.status === "done" && task.actualMinutes !== null) {
 			extra = th.fg("dim", ` (${task.actualMinutes}m)`);
 		}
 
-		const baseIndent = "    ".repeat(depth);
+		const baseIndent = "  ".repeat(depth);
 		const selectionIndicator = isSelected ? th.fg("accent", "▸ ") : "  ";
-		const connector = depth > 0 ? th.fg("borderMuted", "└ ") : "";
-		const raw = `${baseIndent}${selectionIndicator}${connector}${statusIcon} ${id} ${pri} ${title}${extra}`;
+		const raw = `${baseIndent}${selectionIndicator}${statusIcon} ${id} ${pri} ${title}${extra}`;
 		return this.padInner(truncateToWidth(raw, innerWidth), innerWidth);
-	}
-
-	/** Check if task is a group container (has children in entries) */
-	private isGroupTask(task: Task): boolean {
-		return this.entries.some((e) => e.task.parentId === task.id);
-	}
-
-	/** Get children of a task from entries */
-	private getChildren(taskId: number): Task[] {
-		return this.entries.filter((e) => e.task.parentId === taskId).map((e) => e.task);
 	}
 
 	private padInner(text: string, innerWidth: number): string {
@@ -289,7 +299,7 @@ export async function showTaskListOverlay(tasks: Task[], ctx: ExtensionContext, 
 	while (true) {
 		const selectedId = await ctx.ui.custom<number | null>(
 			(_tui, theme, _kb, done) => {
-				return new TaskListOverlay(tasks, theme, (id) => done(id), lastSelectedId);
+				return new TaskListOverlay(tasks, store ?? { tasks, groups: [], sprints: [], nextTaskId: 1, nextGroupId: 1, nextSprintId: 1, activeTaskId: null, activeSprintId: null }, theme, (id) => done(id), lastSelectedId);
 			},
 			{ overlay: true },
 		);

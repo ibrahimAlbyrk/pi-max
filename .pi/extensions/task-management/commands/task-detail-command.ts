@@ -6,7 +6,7 @@ import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { TaskStore, Task } from "../types.js";
 import { STATUS_ICONS, PRIORITY_COLORS, priorityLabel, statusLabel } from "../rendering/icons.js";
-import { findTask, formatElapsed, isGroupContainer } from "../store.js";
+import { findTask, findGroup, formatElapsed } from "../store.js";
 import { wordWrap, formatDate, formatTime } from "../ui/helpers.js";
 
 // ─── Overlay Component ──────────────────────────────────────────
@@ -71,28 +71,11 @@ class TaskDetailOverlay {
 			: t.status === "blocked" ? "error"
 			: t.status === "in_progress" ? "accent"
 			: "dim";
-		const isGroup = isGroupContainer(this.store, t.id);
-		const statusSuffix = isGroup ? th.fg("muted", " (auto-derived)") : "";
 		contentLines.push(this.padInner(
-			`  ${th.fg("muted", "Status:")}   ${th.fg(statusColor as any, `${icon} ${statusLabel(t.status)}`)}${statusSuffix}` +
+			`  ${th.fg("muted", "Status:")}   ${th.fg(statusColor as any, `${icon} ${statusLabel(t.status)}`)}` +
 			`     ${th.fg("muted", "Priority:")} ${th.fg(PRIORITY_COLORS[t.priority] as any, t.priority)}`,
 			innerWidth,
 		));
-
-		// ── Group Container: Progress bar ──
-		if (isGroup) {
-			const subtasks = this.store.tasks.filter((st) => st.parentId === t.id);
-			const doneCount = subtasks.filter((st) => st.status === "done").length;
-			const total = subtasks.length;
-			const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-			const barLen = 20;
-			const filled = Math.round((doneCount / Math.max(total, 1)) * barLen);
-			const bar = th.fg("success", "━".repeat(filled)) + th.fg("borderMuted", "━".repeat(barLen - filled));
-			contentLines.push(this.padInner(
-				`  ${th.fg("muted", "Progress:")} ${bar} ${th.fg("text", `${doneCount}`)}${th.fg("dim", `/${total}`)} ${th.fg("muted", `${pct}%`)}`,
-				innerWidth,
-			));
-		}
 
 		// ── Assignee & Created ──
 		contentLines.push(this.padInner(
@@ -131,11 +114,11 @@ class TaskDetailOverlay {
 			contentLines.push(this.padInner(line, innerWidth));
 		}
 
-		// ── Parent ──
-		if (t.parentId !== null) {
-			const parent = findTask(this.store, t.parentId);
+		// ── Group ──
+		if (t.groupId !== null) {
+			const group = findGroup(this.store, t.groupId);
 			contentLines.push(this.padInner(
-				`  ${th.fg("muted", "Parent:")}   ${th.fg("accent", `#${t.parentId}`)} ${th.fg("dim", parent?.title ?? "unknown")}`,
+				`  ${th.fg("muted", "Group:")}    ${th.fg("accent", `G${t.groupId}`)} ${th.fg("dim", group?.name ?? "unknown")}`,
 				innerWidth,
 			));
 		}
@@ -160,22 +143,6 @@ class TaskDetailOverlay {
 				for (const wl of wrapped) {
 					contentLines.push(this.padInner(`  ${th.fg("text", wl)}`, innerWidth));
 				}
-			}
-		}
-
-		// ── Subtasks ──
-		const subtasks = this.store.tasks.filter((st) => st.parentId === t.id);
-		if (subtasks.length > 0) {
-			contentLines.push(this.padInner("", innerWidth));
-			contentLines.push(this.sectionSep(innerWidth, th));
-			contentLines.push(this.padInner(`  ${th.fg("muted", `Subtasks (${subtasks.length}):`)}`, innerWidth));
-			for (const st of subtasks) {
-				const stIcon = st.status === "done" ? th.fg("success", STATUS_ICONS[st.status])
-					: th.fg("dim", STATUS_ICONS[st.status]);
-				contentLines.push(this.padInner(
-					`    ${stIcon} ${th.fg("accent", `#${st.id}`)} ${th.fg("text", st.title)}  ${th.fg("dim", st.status)}`,
-					innerWidth,
-				));
 			}
 		}
 

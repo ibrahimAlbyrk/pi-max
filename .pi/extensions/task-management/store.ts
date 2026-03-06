@@ -5,15 +5,17 @@
  * and return a text summary. No side effects, no session access.
  */
 
-import type { Task, TaskStore, TaskPriority, TaskStatus } from "./types.js";
+import type { Task, TaskGroup, TaskStore, TaskPriority, TaskStatus } from "./types.js";
 
 // ─── Factory ─────────────────────────────────────────────────────
 
 export function createDefaultStore(): TaskStore {
 	return {
 		tasks: [],
+		groups: [],
 		sprints: [],
 		nextTaskId: 1,
+		nextGroupId: 1,
 		nextSprintId: 1,
 		activeTaskId: null,
 		activeSprintId: null,
@@ -31,7 +33,7 @@ export function createTask(
 		status: partial.status ?? "todo",
 		priority: partial.priority ?? "medium",
 		tags: partial.tags ?? [],
-		parentId: partial.parentId ?? null,
+		groupId: partial.groupId ?? null,
 		dependsOn: partial.dependsOn ?? [],
 		sprintId: partial.sprintId ?? null,
 		notes: [],
@@ -47,120 +49,31 @@ export function createTask(
 	};
 }
 
+export function createGroup(
+	store: TaskStore,
+	name: string,
+	description: string = "",
+): TaskGroup {
+	return {
+		id: store.nextGroupId,
+		name,
+		description,
+		createdAt: new Date().toISOString(),
+	};
+}
+
 // ─── Lookup ──────────────────────────────────────────────────────
 
 export function findTask(store: TaskStore, id: number): Task | undefined {
 	return store.tasks.find((t) => t.id === id);
 }
 
-export function getSubtasks(store: TaskStore, parentId: number): Task[] {
-	return store.tasks.filter((t) => t.parentId === parentId);
+export function findGroup(store: TaskStore, id: number): TaskGroup | undefined {
+	return store.groups.find((g) => g.id === id);
 }
 
-export function getAllDescendants(store: TaskStore, parentId: number): Task[] {
-	const result: Task[] = [];
-	const stack = [parentId];
-	while (stack.length > 0) {
-		const current = stack.pop()!;
-		const children = store.tasks.filter((t) => t.parentId === current);
-		for (const child of children) {
-			result.push(child);
-			stack.push(child.id);
-		}
-	}
-	return result;
-}
-
-// ─── Group Container (Parent = implicit group) ──────────────────
-
-/**
- * A task is a group container if it has any children.
- * Group containers have auto-derived status and cannot be manually changed.
- */
-export function isGroupContainer(store: TaskStore, taskId: number): boolean {
-	return store.tasks.some((t) => t.parentId === taskId);
-}
-
-/**
- * Derive parent status from children's statuses.
- * Rules:
- *  - All done → done
- *  - All todo → todo
- *  - All deferred → deferred
- *  - All blocked → blocked
- *  - Any in_progress/in_review → in_progress
- *  - Mixed (e.g. some done + some todo) → in_progress
- *  - No children → todo
- */
-export function deriveParentStatus(children: Task[]): TaskStatus {
-	if (children.length === 0) return "todo";
-
-	const statuses = children.map((c) => c.status);
-
-	if (statuses.every((s) => s === "done")) return "done";
-	if (statuses.every((s) => s === "todo")) return "todo";
-	if (statuses.every((s) => s === "deferred")) return "deferred";
-	if (statuses.every((s) => s === "blocked")) return "blocked";
-	if (statuses.some((s) => s === "in_progress" || s === "in_review")) return "in_progress";
-
-	// Mixed states (e.g. some done + some todo, but nothing active)
-	return "in_progress";
-}
-
-/**
- * Walk up the parentId chain and re-derive each ancestor's status.
- * Must be called after any subtask status change, create, delete, or move.
- */
-export function updateAncestorStatuses(store: TaskStore, parentId: number | null): void {
-	let current = parentId;
-	while (current !== null) {
-		const parent = store.tasks.find((t) => t.id === current);
-		if (!parent) break;
-		const children = store.tasks.filter((t) => t.parentId === current);
-		if (children.length === 0) break; // not a group container
-		const newStatus = deriveParentStatus(children);
-		if (parent.status === newStatus) break; // no change, stop cascading
-		parent.status = newStatus;
-
-		// Auto-set timestamps for derived status
-		if (newStatus === "done" && !parent.completedAt) {
-			parent.completedAt = new Date().toISOString();
-		}
-		if (newStatus === "in_progress" && !parent.startedAt) {
-			parent.startedAt = new Date().toISOString();
-		}
-
-		current = parent.parentId;
-	}
-}
-
-/**
- * Recompute all parent statuses in the store.
- * Call after loading from storage or reconstructing from session
- * to ensure derived statuses are always in sync.
- */
-export function recomputeAllParentStatuses(store: TaskStore): void {
-	// Process bottom-up: leaf parents first, then their parents, etc.
-	// Simple approach: iterate until no changes (max depth iterations)
-	let changed = true;
-	while (changed) {
-		changed = false;
-		for (const task of store.tasks) {
-			const children = store.tasks.filter((t) => t.parentId === task.id);
-			if (children.length === 0) continue; // leaf task, skip
-			const derived = deriveParentStatus(children);
-			if (task.status !== derived) {
-				task.status = derived;
-				if (derived === "done" && !task.completedAt) {
-					task.completedAt = new Date().toISOString();
-				}
-				if (derived === "in_progress" && !task.startedAt) {
-					task.startedAt = new Date().toISOString();
-				}
-				changed = true;
-			}
-		}
-	}
+export function getGroupTasks(store: TaskStore, groupId: number): Task[] {
+	return store.tasks.filter((t) => t.groupId === groupId);
 }
 
 // ─── Agent Assignment ────────────────────────────────────────────
@@ -204,7 +117,7 @@ export function filterTasks(
 		status?: TaskStatus;
 		priority?: TaskPriority;
 		tag?: string;
-		parentId?: number;
+		groupId?: number;
 	},
 ): Task[] {
 	let result = store.tasks;
@@ -219,8 +132,8 @@ export function filterTasks(
 		const tagLower = filters.tag.toLowerCase();
 		result = result.filter((t) => t.tags.some((tag) => tag.toLowerCase() === tagLower));
 	}
-	if (filters.parentId !== undefined) {
-		result = result.filter((t) => t.parentId === filters.parentId);
+	if (filters.groupId !== undefined) {
+		result = result.filter((t) => t.groupId === filters.groupId);
 	}
 
 	return result;
@@ -239,16 +152,15 @@ export function formatElapsed(ms: number): string {
 // ─── ID Recalculation ────────────────────────────────────────────
 
 /**
- * Recalculate nextTaskId and nextSprintId based on current active items.
- * Call after any operation that removes tasks/sprints (delete, archive, sprint complete).
- *
- * - If no active tasks → nextTaskId resets to 1
- * - If active tasks exist → nextTaskId = max(task IDs) + 1
- * - Same logic for sprints
+ * Recalculate nextTaskId, nextGroupId, and nextSprintId based on current active items.
+ * Call after any operation that removes tasks/groups/sprints (delete, archive, sprint complete).
  */
 export function recalculateNextIds(store: TaskStore): void {
 	store.nextTaskId = store.tasks.length > 0
 		? Math.max(...store.tasks.map((t) => t.id)) + 1
+		: 1;
+	store.nextGroupId = store.groups.length > 0
+		? Math.max(...store.groups.map((g) => g.id)) + 1
 		: 1;
 	store.nextSprintId = store.sprints.length > 0
 		? Math.max(...store.sprints.map((s) => s.id)) + 1
@@ -286,8 +198,10 @@ export function createLightSnapshot(store: TaskStore): TaskStore {
 				? [{ timestamp: t.notes[t.notes.length - 1].timestamp, author: t.notes[t.notes.length - 1].author, text: `(${t.notes.length} notes — latest: ${t.notes[t.notes.length - 1].text.slice(0, 80)})` }]
 				: [],
 		})),
+		groups: store.groups.map((g) => ({ ...g })),
 		sprints: store.sprints.map((s) => ({ ...s })),
 		nextTaskId: store.nextTaskId,
+		nextGroupId: store.nextGroupId,
 		nextSprintId: store.nextSprintId,
 		activeTaskId: store.activeTaskId,
 		activeSprintId: store.activeSprintId,
@@ -299,17 +213,13 @@ export function createLightSnapshot(store: TaskStore): TaskStore {
  * Only includes counts + affected task IDs, NOT the full task list.
  * For 50+ task bulk ops this saves ~90% of context window tokens.
  */
-export function createBulkSnapshot(store: TaskStore, affectedIds: number[]): TaskStore {
-	// Status counts for summary
-	const counts: Record<string, number> = {};
-	for (const t of store.tasks) {
-		counts[t.status] = (counts[t.status] || 0) + 1;
-	}
-
+export function createBulkSnapshot(store: TaskStore, _affectedIds: number[]): TaskStore {
 	return {
 		tasks: [], // Don't include full task list — text summary is enough
+		groups: store.groups.map((g) => ({ ...g })),
 		sprints: store.sprints.map((s) => ({ ...s })),
 		nextTaskId: store.nextTaskId,
+		nextGroupId: store.nextGroupId,
 		nextSprintId: store.nextSprintId,
 		activeTaskId: store.activeTaskId,
 		activeSprintId: store.activeSprintId,

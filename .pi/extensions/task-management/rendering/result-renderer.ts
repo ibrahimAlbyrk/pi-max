@@ -148,7 +148,7 @@ export function taskRenderResult(
 }
 
 function renderTaskLine(t: Task, theme: Theme): string {
-	const icon = STATUS_ICONS[t.status];
+	const icon = STATUS_ICONS[t.status] ?? "?";
 	const statusIcon = t.status === "done"
 		? theme.fg("success", icon)
 		: t.status === "blocked"
@@ -166,19 +166,16 @@ function renderTaskLine(t: Task, theme: Theme): string {
 	let line = `${statusIcon} ${id} ${pri} ${title}`;
 
 	if (t.agentName) {
-		const agentColor = t.agentColor
-			? `\x1b[38;2;${parseInt(t.agentColor.slice(1, 3), 16)};${parseInt(t.agentColor.slice(3, 5), 16)};${parseInt(t.agentColor.slice(5, 7), 16)}m`
-			: "";
-		line += ` ${agentColor}@${t.agentName}\x1b[0m`;
+		line += " " + theme.fg("dim", `@${t.agentName}`);
 	}
 
 	if (t.status === "in_progress" && t.startedAt) {
 		const elapsed = Date.now() - new Date(t.startedAt).getTime();
-		line += ` ${theme.fg("dim", `(${formatElapsed(elapsed)})`)}`;
+		line += " " + theme.fg("dim", `(${formatElapsed(elapsed)})`);
 	}
 
-	if (t.status === "done" && t.actualMinutes !== null) {
-		line += ` ${theme.fg("dim", `(${t.actualMinutes}m)`)}`;
+	if (t.status === "done" && t.actualMinutes !== null && t.actualMinutes > 0) {
+		line += " " + theme.fg("dim", `(${t.actualMinutes}m)`);
 	}
 
 	return line;
