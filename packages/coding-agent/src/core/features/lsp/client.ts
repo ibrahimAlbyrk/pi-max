@@ -35,6 +35,7 @@ interface LspProtocolModule {
 	InitializeRequest: { type: { method: string } };
 	DefinitionRequest: { type: { method: string } };
 	ReferencesRequest: { type: { method: string } };
+	HoverRequest: { type: { method: string } };
 	DidChangeTextDocumentNotification: { type: { method: string } };
 	DidOpenTextDocumentNotification: { type: { method: string } };
 }
@@ -55,6 +56,11 @@ export interface Location {
 	file: string;
 	line: number; // 0-indexed (internal), converted to 1-indexed in tool output
 	character: number; // 0-indexed (internal), converted to 1-indexed in tool output
+}
+
+export interface SymbolInfo {
+	name: string;
+	kind: string; // "function", "class", "type", "interface", "variable", "constant", "method", "property", "enum", "enum member", "parameter", "namespace", "constructor", "module"
 }
 
 export interface DiagnosticEntry {
@@ -341,6 +347,41 @@ export class LspClient {
 		}));
 	}
 
+	/**
+	 * Get hover information for a symbol at the given 0-indexed position.
+	 * Returns the raw hover text content (code block content extracted from markdown).
+	 */
+	async getHover(filePath: string, line: number, character: number): Promise<string | null> {
+		if (!this.connection || !this.initialized) return null;
+
+		await this.ensureOpen(filePath);
+
+		const result = await this.connection.sendRequest(lsp().HoverRequest.type, {
+			textDocument: { uri: `file://${resolve(filePath)}` },
+			position: { line, character },
+		});
+
+		if (!result || !result.contents) return null;
+
+		const contents = result.contents;
+		if (typeof contents === "string") return contents;
+		if ("value" in contents) return contents.value;
+		if (Array.isArray(contents)) {
+			return contents.map((c: string | { value: string }) => (typeof c === "string" ? c : c.value)).join("\n");
+		}
+		return null;
+	}
+
+	/**
+	 * Get symbol info (name + kind) for a symbol at the given 0-indexed position.
+	 * Uses hover to determine the symbol kind, then extracts the name.
+	 */
+	async getSymbolInfo(filePath: string, line: number, character: number): Promise<SymbolInfo | null> {
+		const hoverContent = await this.getHover(filePath, line, character);
+		if (!hoverContent) return null;
+		return parseSymbolInfo(hoverContent);
+	}
+
 	// --- Accessors ---
 
 	/** Server display name (e.g., "typescript-language-server"). */
@@ -360,4 +401,70 @@ export class LspClient {
 
 function uriToPath(uri: string): string {
 	return uri.replace(/^file:\/\//, "");
+}
+
+/**
+ * Extract code content from markdown hover response.
+ * TypeScript LSP returns hover as: ```typescript\n<code>\n```
+ */
+function extractCodeFromMarkdown(markdown: string): string {
+	const codeBlockMatch = markdown.match(/```\w*\n([\s\S]*?)```/);
+	if (codeBlockMatch) return codeBlockMatch[1].trim();
+	return markdown.trim();
+}
+
+/**
+ * Parse hover content to extract symbol name and kind.
+ *
+ * TypeScript LSP hover patterns:
+ * - "function stream(...)"         → function
+ * - "class LspClient"              → class
+ * - "interface StreamOptions"      → interface
+ * - "type Api = ..."               → type
+ * - "const DEFAULT_TIMEOUT: ..."   → constant
+ * - "let foo: string"              → variable
+ * - "var bar: number"              → variable
+ * - "(method) getDefinition(...)"  → method
+ * - "(property) connection: ..."   → property
+ * - "(parameter) options: ..."     → parameter
+ * - "enum SymbolKind"              → enum
+ * - "enum member Function = ..."   → enum member
+ * - "namespace providers"          → namespace
+ * - "constructor LspClient(...)"   → constructor
+ * - "module ..."                   → module
+ */
+export function parseSymbolInfo(hoverContent: string): SymbolInfo | null {
+	const code = extractCodeFromMarkdown(hoverContent);
+	const firstLine = code.split("\n")[0]?.trim();
+	if (!firstLine) return null;
+
+	// Strip "(alias) " or "(type alias) " prefix — TS LSP wraps re-exported symbols:
+	// "(alias) interface Context" → parse as "interface Context"
+	// "(alias) type Api = ..." → parse as "type Api = ..."
+	// "(alias) function bar(...)" → parse as "function bar(...)"
+	const stripped = firstLine.replace(/^\((?:type\s+)?alias\)\s+/, "");
+
+	// Pattern: "(kind) name" — e.g. (method) getDefinition, (property) connection
+	const parenMatch = stripped.match(/^\((\w[\w\s]*)\)\s+(?:[\w.]+\.)?(\w+)/);
+	if (parenMatch) {
+		return { kind: parenMatch[1], name: parenMatch[2] };
+	}
+
+	// Pattern: "keyword name" — e.g. function stream, class LspClient, const FOO
+	const keywordMatch = stripped.match(
+		/^(function|class|interface|type|const|let|var|enum|namespace|module|constructor)\s+(\w+)/,
+	);
+	if (keywordMatch) {
+		const rawKind = keywordMatch[1];
+		const kind = rawKind === "const" ? "constant" : rawKind === "let" || rawKind === "var" ? "variable" : rawKind;
+		return { kind, name: keywordMatch[2] };
+	}
+
+	// Pattern: "import Name" — e.g. import Api
+	const importMatch = stripped.match(/^import\s+(\w+)/);
+	if (importMatch) {
+		return { kind: "import", name: importMatch[1] };
+	}
+
+	return null;
 }

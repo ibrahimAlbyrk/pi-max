@@ -28,6 +28,8 @@ const lspDefinitionSchema = Type.Object({
 export type LspDefinitionInput = Static<typeof lspDefinitionSchema>;
 
 export interface LspDefinitionDetails {
+	symbolName?: string;
+	symbolKind?: string;
 	locations: Array<{ file: string; line: number; character: number }>;
 }
 
@@ -54,7 +56,9 @@ async function executeLspDefinition(
 	}
 
 	// Convert from 1-indexed (tool API) to 0-indexed (LSP protocol)
-	const locations = await client.getDefinition(absPath, params.line - 1, params.character - 1);
+	const line0 = params.line - 1;
+	const char0 = params.character - 1;
+	const locations = await client.getDefinition(absPath, line0, char0);
 
 	if (locations.length === 0) {
 		return {
@@ -63,15 +67,21 @@ async function executeLspDefinition(
 		};
 	}
 
+	// Get symbol info (name + kind) via hover
+	const symbolInfo = await client.getSymbolInfo(absPath, line0, char0);
+
 	// Convert back to 1-indexed for output
+	const prefix = symbolInfo ? `${symbolInfo.kind} \`${symbolInfo.name}\` defined at ` : "";
 	const formatted = locations.map((loc) => {
 		const relPath = relative(cwd, loc.file);
-		return `${relPath}:${loc.line + 1}:${loc.character + 1}`;
+		return `${prefix}${relPath}:${loc.line + 1}:${loc.character + 1}`;
 	});
 
 	return {
 		content: [{ type: "text", text: formatted.join("\n") }],
 		details: {
+			symbolName: symbolInfo?.name,
+			symbolKind: symbolInfo?.kind,
 			locations: locations.map((loc) => ({
 				file: relative(cwd, loc.file),
 				line: loc.line + 1,
@@ -109,8 +119,14 @@ export const lspDefinitionDefinition: ToolDefinition<typeof lspDefinitionSchema,
 		const raw = result.content[0];
 		const text = raw?.type === "text" ? raw.text : "";
 		if (!expanded) {
+			const symbolName = result.details?.symbolName;
+			const symbolKind = result.details?.symbolKind;
 			const first = locations[0];
-			const summary = first ? `${first.file}:${first.line}:${first.character}` : (text.split("\n")[0] ?? text);
+			const loc = first ? `${first.file}:${first.line}:${first.character}` : "";
+			const summary =
+				symbolName && symbolKind
+					? `${symbolKind} \`${symbolName}\` defined at ${loc}`
+					: loc || (text.split("\n")[0] ?? text);
 			return new Text(theme.fg("success", summary), 0, 0);
 		}
 		return new Text(text, 0, 0);

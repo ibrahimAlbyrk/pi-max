@@ -30,6 +30,8 @@ export type LspReferencesInput = Static<typeof lspReferencesSchema>;
 
 export interface LspReferencesDetails {
 	referenceCount: number;
+	symbolName?: string;
+	symbolKind?: string;
 	locations: Array<{ file: string; line: number; character: number }>;
 }
 
@@ -59,7 +61,9 @@ async function executeLspReferences(
 	const includeDecl = params.includeDeclaration !== false;
 
 	// Convert from 1-indexed (tool API) to 0-indexed (LSP protocol)
-	const locations = await client.getReferences(absPath, params.line - 1, params.character - 1, includeDecl);
+	const line0 = params.line - 1;
+	const char0 = params.character - 1;
+	const locations = await client.getReferences(absPath, line0, char0, includeDecl);
 
 	if (locations.length === 0) {
 		return {
@@ -68,16 +72,25 @@ async function executeLspReferences(
 		};
 	}
 
+	// Get symbol info (name + kind) via hover
+	const symbolInfo = await client.getSymbolInfo(absPath, line0, char0);
+
 	// Convert back to 1-indexed for output
 	const formatted = locations.map((loc) => {
 		const relPath = relative(cwd, loc.file);
 		return `${relPath}:${loc.line + 1}:${loc.character + 1}`;
 	});
 
+	const header = symbolInfo
+		? `${locations.length} references for ${symbolInfo.kind} \`${symbolInfo.name}\`:`
+		: `${locations.length} references:`;
+
 	return {
-		content: [{ type: "text", text: `${locations.length} references:\n${formatted.join("\n")}` }],
+		content: [{ type: "text", text: `${header}\n${formatted.join("\n")}` }],
 		details: {
 			referenceCount: locations.length,
+			symbolName: symbolInfo?.name,
+			symbolKind: symbolInfo?.kind,
 			locations: locations.map((loc) => ({
 				file: relative(cwd, loc.file),
 				line: loc.line + 1,
@@ -115,7 +128,13 @@ export const lspReferencesDefinition: ToolDefinition<typeof lspReferencesSchema,
 		const raw = result.content[0];
 		const text = raw?.type === "text" ? raw.text : "";
 		if (!expanded) {
-			return new Text(theme.fg("success", `${count} reference${count === 1 ? "" : "s"}`), 0, 0);
+			const symbolName = result.details?.symbolName;
+			const symbolKind = result.details?.symbolKind;
+			const summary =
+				symbolName && symbolKind
+					? `${count} reference${count === 1 ? "" : "s"} for ${symbolKind} \`${symbolName}\``
+					: `${count} reference${count === 1 ? "" : "s"}`;
+			return new Text(theme.fg("success", summary), 0, 0);
 		}
 		return new Text(text, 0, 0);
 	},
