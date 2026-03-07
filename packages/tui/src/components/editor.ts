@@ -301,8 +301,8 @@ export class Editor implements Component, Focusable {
 
 	/**
 	 * Check if the argument hint should be shown.
-	 * Only shows when: single line, starts with "/command ", no arguments typed yet,
-	 * and autocomplete is not active.
+	 * Only shows when: single line, starts with "/command ", has exactly one
+	 * space after the command, and autocomplete is not active.
 	 */
 	private shouldShowArgumentHint(): boolean {
 		if (this.autocompleteState) return false;
@@ -314,7 +314,7 @@ export class Editor implements Component, Focusable {
 		if (spaceIdx === -1) return false; // no space yet — autocomplete is likely showing
 
 		const afterCommand = text.slice(spaceIdx + 1);
-		return afterCommand.trim().length === 0; // only whitespace after command
+		return afterCommand.length === 0;
 	}
 
 	/**
@@ -709,15 +709,9 @@ export class Editor implements Component, Focusable {
 					this.state.lines = result.lines;
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
-
-					if (this.autocompletePrefix.startsWith("/")) {
-						this.cancelAutocomplete();
-						// Fall through to submit
-					} else {
-						this.cancelAutocomplete();
-						if (this.onChange) this.onChange(this.getText());
-						return;
-					}
+					this.cancelAutocomplete();
+					if (this.onChange) this.onChange(this.getText());
+					return;
 				}
 			}
 		}

@@ -2110,6 +2110,7 @@ export class InteractiveMode {
 			this.editor = this.defaultEditor;
 		}
 
+		this.updateArgumentHint(currentText);
 		this.editorContainer.addChild(this.editor as Component);
 		this.ui.setFocus(this.editor as Component);
 		this.updateEditorSessionBadge();
@@ -2410,13 +2411,19 @@ export class InteractiveMode {
 		};
 	}
 
+	private setEditorArgumentHint(hint: string | null): void {
+		this.defaultEditor.setArgumentHint(hint);
+		if (this.editor === this.defaultEditor) return;
+		(this.editor as EditorComponent & { setArgumentHint?: (value: string | null) => void }).setArgumentHint?.(hint);
+	}
+
 	/**
 	 * Update the editor's argument hint based on current text.
 	 * Shows dim placeholder text when a slash command is entered but no arguments typed yet.
 	 */
 	private updateArgumentHint(text: string): void {
 		if (!text.startsWith("/")) {
-			this.defaultEditor.setArgumentHint(null);
+			this.setEditorArgumentHint(null);
 			return;
 		}
 
@@ -2424,7 +2431,7 @@ export class InteractiveMode {
 		const spaceIdx = text.indexOf(" ");
 		if (spaceIdx === -1) {
 			// No space yet — user is still typing the command name
-			this.defaultEditor.setArgumentHint(null);
+			this.setEditorArgumentHint(null);
 			return;
 		}
 
@@ -2433,12 +2440,12 @@ export class InteractiveMode {
 
 		if (afterCommand.length > 0) {
 			// User has started typing arguments
-			this.defaultEditor.setArgumentHint(null);
+			this.setEditorArgumentHint(null);
 			return;
 		}
 
 		const hint = this.argumentHints.get(commandName);
-		this.defaultEditor.setArgumentHint(hint ?? null);
+		this.setEditorArgumentHint(hint ?? null);
 	}
 
 	private async handleClipboardImagePaste(): Promise<void> {
