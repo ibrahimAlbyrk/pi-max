@@ -2475,14 +2475,28 @@ export class InteractiveMode {
 			text = text.trim();
 			if (!text) return;
 
-			// Transition from splash to chat layout on first input
+			// Transition from splash to chat layout on first input.
+			// Selector-based commands (model, resume, settings, etc.) stay in splash —
+			// they replace the editor inside CenteredContainer without needing chat layout.
 			if (this.splashLayout?.isActive()) {
-				// Use instant transition for slash commands (they show overlays immediately)
-				// Use animated transition for normal messages
-				if (text.startsWith("/") || text.startsWith("!")) {
-					this.splashLayout.instantTransition();
-				} else {
-					await this.splashLayout.transitionToChat();
+				const splashSafeCommands = [
+					"/settings",
+					"/model",
+					"/scoped-models",
+					"/resume",
+					"/login",
+					"/logout",
+					"/tree",
+					"/fork",
+				];
+				const isSplashSafe = splashSafeCommands.some((cmd) => text === cmd || text.startsWith(`${cmd} `));
+
+				if (!isSplashSafe) {
+					if (text.startsWith("/") || text.startsWith("!")) {
+						this.splashLayout.instantTransition();
+					} else {
+						await this.splashLayout.transitionToChat();
+					}
 				}
 			}
 
@@ -3704,6 +3718,96 @@ export class InteractiveMode {
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
 	 */
 	private showSelector(create: (done: () => void) => { component: Component; focus: Component }): void {
+		// When splash is active, show selector as an overlay so the splash screen stays intact.
+		if (this.splashLayout?.isActive()) {
+			let overlayHandle: OverlayHandle | undefined;
+			const done = () => {
+				overlayHandle?.hide();
+				this.ui.setFocus(this.editor);
+			};
+			const { component, focus } = create(done);
+
+			// Wrap component with side borders. Selector components already render
+			// their own DynamicBorder lines (─────). We detect those and turn them
+			// into corner rows (┌───┐ / └───┘) instead of adding extra top/bottom lines.
+			// Side border color is extracted from the DynamicBorder's ANSI styling
+			// so corners and sides match the selector's own border color.
+			const fallbackColor = (s: string) => theme.fg("border", s);
+			const bordered: Component = {
+				invalidate() {
+					component.invalidate();
+				},
+				render(width: number) {
+					const inner = width - 2;
+					if (inner <= 0) return component.render(width);
+					const lines = component.render(inner);
+
+					// Find first and last DynamicBorder line indices
+					let firstBorder = -1;
+					let lastBorder = -1;
+					for (let i = 0; i < lines.length; i++) {
+						const stripped = lines[i].replace(/\x1b\[[0-9;]*m/g, "");
+						if (stripped.length > 0 && /^─+$/.test(stripped)) {
+							if (firstBorder === -1) firstBorder = i;
+							lastBorder = i;
+						}
+					}
+
+					// Extract the ANSI color prefix from a DynamicBorder line so we
+					// can apply the same styling to corners and vertical borders.
+					let colorize = fallbackColor;
+					if (firstBorder !== -1) {
+						const ansiMatch = lines[firstBorder].match(/^(\x1b\[[0-9;]*m)/);
+						if (ansiMatch) {
+							const prefix = ansiMatch[1];
+							const reset = "\x1b[0m";
+							colorize = (s: string) => `${prefix}${s}${reset}`;
+						}
+					}
+					const vl = colorize("│");
+
+					// Fallback: if no DynamicBorder found, wrap with our own box
+					if (firstBorder === -1) {
+						const top = colorize("┌") + colorize("─".repeat(inner)) + colorize("┐");
+						const bot = colorize("└") + colorize("─".repeat(inner)) + colorize("┘");
+						const result = [top];
+						for (const line of lines) {
+							const pad = Math.max(0, inner - visibleWidth(line));
+							result.push(vl + line + " ".repeat(pad) + vl);
+						}
+						result.push(bot);
+						return result;
+					}
+
+					// Only render lines between first and last DynamicBorder (inclusive).
+					// Lines outside that range (spacers before/after) are dropped so
+					// there are no stray │ fragments above or below the box.
+					const result: string[] = [];
+					for (let i = firstBorder; i <= lastBorder; i++) {
+						const line = lines[i];
+						const pad = Math.max(0, inner - visibleWidth(line));
+						if (i === firstBorder) {
+							result.push(colorize("┌") + line + " ".repeat(pad) + colorize("┐"));
+						} else if (i === lastBorder) {
+							result.push(colorize("└") + line + " ".repeat(pad) + colorize("┘"));
+						} else {
+							result.push(vl + line + " ".repeat(pad) + vl);
+						}
+					}
+					return result;
+				},
+			};
+
+			overlayHandle = this.ui.showOverlay(bordered, {
+				width: "60%",
+				minWidth: 60,
+				maxHeight: "80%",
+				anchor: "center",
+			});
+			this.ui.setFocus(focus);
+			return;
+		}
+
 		const done = () => {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
@@ -3858,6 +3962,7 @@ export class InteractiveMode {
 				await this.session.setModel(model);
 				this.footer.invalidate();
 				this.updateEditorBorderColor();
+				this.updateSplashModelInfo();
 				this.showStatus(`Model: ${model.id}`);
 				this.checkDaxnutsEasterEgg(model);
 			} catch (error) {
@@ -3929,6 +4034,7 @@ export class InteractiveMode {
 						await this.session.setModel(model);
 						this.footer.invalidate();
 						this.updateEditorBorderColor();
+						this.updateSplashModelInfo();
 						done();
 						this.showStatus(`Model: ${model.id}`);
 						this.checkDaxnutsEasterEgg(model);
@@ -4237,6 +4343,10 @@ export class InteractiveMode {
 					SessionManager.list(this.sessionManager.getCwd(), this.sessionManager.getSessionDir(), onProgress),
 				SessionManager.listAll,
 				async (sessionPath) => {
+					// Transition out of splash before restoring editor and loading session
+					if (this.splashLayout?.isActive()) {
+						this.splashLayout.instantTransition();
+					}
 					done();
 					await this.handleResumeSession(sessionPath);
 				},
