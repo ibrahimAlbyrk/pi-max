@@ -2,9 +2,71 @@
  * Tool wrappers for extensions.
  */
 
-import type { AgentTool, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 import type { ExtensionRunner } from "./runner.js";
 import type { RegisteredTool, ToolCallEventResult } from "./types.js";
+
+// ============================================================================
+// Middleware
+// ============================================================================
+
+/**
+ * The continuation function passed to each middleware in the chain.
+ * Calling it advances execution to the next middleware, or to the underlying
+ * tool execute when no more middleware remain.
+ */
+export type ToolMiddlewareNext = (
+	toolCallId: string,
+	params: Record<string, unknown>,
+	signal: AbortSignal | undefined,
+	onUpdate: AgentToolUpdateCallback | undefined,
+) => Promise<AgentToolResult<any>>;
+
+/**
+ * Middleware function for tool execution.
+ *
+ * Middleware runs inside the extension tool_call/tool_result interception layer,
+ * so extension handlers still fire around the full middleware chain. Call `next`
+ * to continue the chain; short-circuiting without calling `next` blocks execution.
+ */
+export type ToolMiddlewareFn = (
+	toolCallId: string,
+	params: Record<string, unknown>,
+	signal: AbortSignal | undefined,
+	onUpdate: AgentToolUpdateCallback | undefined,
+	next: ToolMiddlewareNext,
+) => Promise<AgentToolResult<any>>;
+
+/**
+ * Apply an ordered list of middleware functions to a tool, returning a new tool
+ * whose execute function runs through the middleware chain before reaching the
+ * original execute. Returns the tool unchanged if the middleware list is empty.
+ *
+ * Middleware is applied in registration order (index 0 is outermost).
+ */
+export function applyToolMiddleware(tool: AgentTool, middleware: ReadonlyArray<ToolMiddlewareFn>): AgentTool {
+	if (middleware.length === 0) return tool;
+
+	// Cast to AgentTool<any> so tool.execute accepts Record<string, unknown> params
+	// without a Static<TSchema> constraint mismatch — the same pattern used by
+	// wrapToolWithExtensions<T>(tool: AgentTool<any, T>, ...).
+	const baseTool = tool as AgentTool<any>;
+
+	const buildNext =
+		(index: number): ToolMiddlewareNext =>
+		(tcId, p, s, ou) => {
+			if (index < middleware.length) {
+				return middleware[index]!(tcId, p, s, ou, buildNext(index + 1));
+			}
+			return baseTool.execute(tcId, p, s, ou);
+		};
+
+	return {
+		...baseTool,
+		execute: (toolCallId, params, signal, onUpdate) =>
+			buildNext(0)(toolCallId, params as Record<string, unknown>, signal, onUpdate),
+	};
+}
 
 /**
  * Wrap a RegisteredTool into an AgentTool.
@@ -17,6 +79,7 @@ export function wrapRegisteredTool(registeredTool: RegisteredTool, runner: Exten
 		label: definition.label,
 		description: definition.description,
 		parameters: definition.parameters,
+		sideEffects: definition.sideEffects,
 		execute: (toolCallId, params, signal, onUpdate) =>
 			definition.execute(toolCallId, params, signal, onUpdate, runner.createContext()),
 	};

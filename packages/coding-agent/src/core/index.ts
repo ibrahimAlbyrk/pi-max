@@ -14,13 +14,13 @@ export {
 export { type BashExecutorOptions, type BashResult, executeBash, executeBashWithOperations } from "./bash-executor.js";
 export type { CompactionResult } from "./compaction/index.js";
 export { createEventBus, type EventBus, type EventBusController } from "./event-bus.js";
-
 // Extensions system
 export {
 	type AgentEndEvent,
 	type AgentStartEvent,
 	type AgentToolResult,
 	type AgentToolUpdateCallback,
+	applyToolMiddleware,
 	type BeforeAgentStartEvent,
 	type ContextEvent,
 	discoverAndLoadExtensions,
@@ -59,9 +59,23 @@ export {
 	type SessionTreeEvent,
 	type ToolCallEvent,
 	type ToolDefinition,
+	type ToolMiddlewareFn,
+	type ToolMiddlewareNext,
 	type ToolRenderResultOptions,
 	type ToolResultEvent,
 	type TurnEndEvent,
 	type TurnStartEvent,
 	wrapToolsWithExtensions,
 } from "./extensions/index.js";
+export {
+	type BuiltinToolEntry,
+	type ExtensionOrSdkToolEntry,
+	type ToolOrigin,
+	ToolRegistry,
+	type ToolRegistryDiagnostic,
+	type ToolRegistryDuplicate,
+	type ToolRegistryEntry,
+	type ToolValidationCode,
+	type ToolValidationIssue,
+	type ToolValidationSeverity,
+} from "./tool-registry.js";

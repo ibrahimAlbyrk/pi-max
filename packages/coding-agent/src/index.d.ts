@@ -145,33 +145,6 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.js";
 export { DefaultPackageManager } from "./core/package-manager.js";
-export type {
-	ParsedPrompt,
-	PromptMeta,
-	PromptRegistry,
-	PromptRegistryOptions,
-	RendererContext,
-	RenderVariables,
-	ResolvedPrompt,
-	ValidationResult,
-	VariableDefinition,
-	VariableType,
-} from "./core/prompt/index.js";
-export {
-	CircularReferenceError,
-	createPromptRegistry,
-	derivePromptName,
-	ExtendsDepthError,
-	getTemplatesDir,
-	PromptError,
-	PromptNotFoundError,
-	PromptParseError,
-	parsePromptContent,
-	parsePromptFile,
-	renderTemplate,
-	TemplateRenderError,
-	VariableRequiredError,
-} from "./core/prompt/index.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
 export { DefaultResourceLoader } from "./core/resource-loader.js";
 export {

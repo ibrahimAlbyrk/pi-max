@@ -2,7 +2,7 @@
  * Shared prompt registry instance for the coding agent.
  * Lazily initialized on first access.
  */
-import { type PromptRegistry } from "./prompt/index.js";
+import { type PromptRegistry } from "@mariozechner/pi-prompt";
 /**
  * Get the shared prompt registry instance.
  * Creates and caches it on first call.

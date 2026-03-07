@@ -452,7 +452,11 @@ const myTool: ToolDefinition = {
   parameters: Type.Object({
     input: Type.String({ description: "Input value" }),
   }),
-  execute: async (toolCallId, params, onUpdate, ctx, signal) => ({
+  // sideEffects: false marks a tool as read-only, allowing the agent loop to
+  // parallelize it with other read-only tools (up to maxParallelTools, default 5).
+  // Omit or set to true for tools that write files, run commands, or modify state.
+  sideEffects: false,
+  execute: async (toolCallId, params, signal, onUpdate, ctx) => ({
     content: [{ type: "text", text: `Result: ${params.input}` }],
     details: {},
   }),
@@ -464,7 +468,9 @@ const { session } = await createAgentSession({
 });
 ```
 
-Custom tools passed via `customTools` are combined with extension-registered tools. Extensions loaded by the ResourceLoader can also register tools via `pi.registerTool()`.
+Custom tools passed via `customTools` are registered in the session's `ToolRegistry` with `"sdk"` origin. Extensions loaded by the `ResourceLoader` register tools with `"extension"` origin via `pi.registerTool()`. Both origins follow last-write-wins semantics; SDK tools override extension tools when names collide.
+
+The `ToolRegistry` is the canonical runtime authority for all tools in a session. It validates metadata on registration and tracks duplicate overrides. See [tools-architecture.md](tools-architecture.md) for the full architecture.
 
 > See [examples/sdk/05-tools.ts](../examples/sdk/05-tools.ts)
 

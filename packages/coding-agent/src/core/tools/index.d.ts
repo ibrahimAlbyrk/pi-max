@@ -1,3 +1,4 @@
+export { askQuestionTool } from "./ask-question.js";
 export {
 	type BashOperations,
 	type BashSpawnContext,
@@ -9,6 +10,12 @@ export {
 	createBashTool,
 } from "./bash.js";
 export {
+	type BgToolDetails,
+	type BgToolInput,
+	bgToolDefinition,
+	createBgTool,
+} from "./bg.js";
+export {
 	createEditTool,
 	type EditOperations,
 	type EditToolDetails,
@@ -17,30 +24,6 @@ export {
 	editTool,
 } from "./edit.js";
 export {
-	createFindTool,
-	type FindOperations,
-	type FindToolDetails,
-	type FindToolInput,
-	type FindToolOptions,
-	findTool,
-} from "./find.js";
-export {
-	createGrepTool,
-	type GrepOperations,
-	type GrepToolDetails,
-	type GrepToolInput,
-	type GrepToolOptions,
-	grepTool,
-} from "./grep.js";
-export {
-	createLsTool,
-	type LsOperations,
-	type LsToolDetails,
-	type LsToolInput,
-	type LsToolOptions,
-	lsTool,
-} from "./ls.js";
-export {
 	createReadTool,
 	type ReadOperations,
 	type ReadToolDetails,
@@ -48,6 +31,18 @@ export {
 	type ReadToolOptions,
 	readTool,
 } from "./read.js";
+export {
+	createSearchTool,
+	type SearchToolDetails,
+	type SearchToolInput,
+	type SearchToolOptions,
+	searchTool,
+} from "./search.js";
+export {
+	createTaskTool,
+	type TaskToolInput,
+	taskToolDefinition,
+} from "./task.js";
 export {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -72,85 +67,24 @@ import { type BashToolOptions } from "./bash.js";
 import { type ReadToolOptions } from "./read.js";
 /** Tool type (AgentTool from pi-ai) */
 export type Tool = AgentTool<any>;
+export type ToolName =
+	| "read"
+	| "bash"
+	| "edit"
+	| "write"
+	| "search"
+	| "webfetch"
+	| "websearch"
+	| "bg"
+	| "task"
+	| "lsp_diagnostics"
+	| "lsp_definition"
+	| "lsp_references";
+export declare const toolRegistry: Record<ToolName, (cwd: string) => Tool>;
 export declare const codingTools: Tool[];
 export declare const readOnlyTools: Tool[];
-export declare const allTools: {
-	read: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			path: import("@sinclair/typebox").TString;
-			offset: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-			limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-		}>,
-		any
-	>;
-	bash: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			command: import("@sinclair/typebox").TString;
-			timeout: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-		}>,
-		any
-	>;
-	edit: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			path: import("@sinclair/typebox").TString;
-			oldText: import("@sinclair/typebox").TString;
-			newText: import("@sinclair/typebox").TString;
-		}>,
-		any
-	>;
-	write: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			path: import("@sinclair/typebox").TString;
-			content: import("@sinclair/typebox").TString;
-		}>,
-		any
-	>;
-	grep: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			pattern: import("@sinclair/typebox").TString;
-			path: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-			glob: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-			ignoreCase: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-			literal: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-			context: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-			limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-		}>,
-		any
-	>;
-	find: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			pattern: import("@sinclair/typebox").TString;
-			path: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-			limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-		}>,
-		any
-	>;
-	ls: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			path: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-			limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-		}>,
-		any
-	>;
-	webfetch: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			url: import("@sinclair/typebox").TString;
-			selector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-			raw: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-			limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-		}>,
-		any
-	>;
-	websearch: AgentTool<
-		import("@sinclair/typebox").TObject<{
-			query: import("@sinclair/typebox").TString;
-			count: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-			site: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-		}>,
-		any
-	>;
-};
-export type ToolName = keyof typeof allTools;
+export declare const allTools: Record<ToolName, Tool>;
+export declare function createToolsByName(names: string[], cwd: string): Tool[];
 export interface ToolsOptions {
 	/** Options for the read tool */
 	read?: ReadToolOptions;

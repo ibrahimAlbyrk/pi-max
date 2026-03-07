@@ -12,6 +12,7 @@ export function wrapRegisteredTool(registeredTool, runner) {
         label: definition.label,
         description: definition.description,
         parameters: definition.parameters,
+        sideEffects: definition.sideEffects,
         execute: (toolCallId, params, signal, onUpdate) => definition.execute(toolCallId, params, signal, onUpdate, runner.createContext()),
     };
 }

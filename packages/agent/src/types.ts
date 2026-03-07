@@ -161,10 +161,19 @@ export interface AgentToolResult<T> {
 // Callback for streaming tool execution updates
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
-// AgentTool extends Tool but adds the execute function
-export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
-	// A human-readable label for the tool to be displayed in UI
+/**
+ * Canonical shared base for executable tool definitions.
+ * Extends Tool (name/description/parameters from packages/ai) with a human-readable label.
+ * Used as the common base for both AgentTool and coding-agent's ToolDefinition.
+ */
+export interface BaseToolDefinition<TParameters extends TSchema = TSchema> extends Tool<TParameters> {
+	/** Human-readable label for UI display */
 	label: string;
+}
+
+// AgentTool extends BaseToolDefinition and adds execution-specific fields
+export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any>
+	extends BaseToolDefinition<TParameters> {
 	/** Whether this tool has side effects (writes files, runs commands). Default: true (safe fallback). */
 	sideEffects?: boolean;
 	execute: (

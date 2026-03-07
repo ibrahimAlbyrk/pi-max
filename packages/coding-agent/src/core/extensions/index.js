@@ -4,6 +4,6 @@
 export { createExtensionRuntime, discoverAndLoadExtensions, loadExtensionFromFactory, loadExtensions, } from "./loader.js";
 export { ExtensionRunner } from "./runner.js";
 // Type guards
-export { isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, } from "./types.js";
+export { isBashToolResult, isEditToolResult, isReadToolResult, isSearchToolResult, isToolCallEventType, isWriteToolResult, } from "./types.js";
 export { wrapRegisteredTool, wrapRegisteredTools, wrapToolsWithExtensions, wrapToolWithExtensions, } from "./wrapper.js";
 //# sourceMappingURL=index.js.map

@@ -2,7 +2,6 @@ import {
 	BedrockRuntimeClient,
 	type BedrockRuntimeClientConfig,
 	StopReason as BedrockStopReason,
-	type Tool as BedrockTool,
 	CachePointType,
 	CacheTTL,
 	type ContentBlock,
@@ -43,6 +42,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.js";
+import { serializeBedrockTools } from "./tool-serializers.js";
 import { transformMessages } from "./transform-messages.js";
 
 export interface BedrockOptions extends StreamOptions {
@@ -624,13 +624,7 @@ function convertToolConfig(
 ): ToolConfiguration | undefined {
 	if (!tools?.length || toolChoice === "none") return undefined;
 
-	const bedrockTools: BedrockTool[] = tools.map((tool) => ({
-		toolSpec: {
-			name: tool.name,
-			description: tool.description,
-			inputSchema: { json: tool.parameters },
-		},
-	}));
+	const bedrockTools = serializeBedrockTools(tools);
 
 	let bedrockToolChoice: ToolChoice | undefined;
 	switch (toolChoice) {

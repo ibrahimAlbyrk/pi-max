@@ -27,6 +27,8 @@ export type {
 	// App keybindings (for custom editors)
 	AppAction,
 	AppendEntryHandler,
+	// Tools
+	BaseToolDefinition,
 	// Events - Tool (ToolCallEvent types)
 	BashToolCallEvent,
 	BashToolResultEvent,
@@ -130,7 +132,6 @@ export type {
 	// Events - Tool
 	ToolCallEvent,
 	ToolCallEventResult,
-	// Tools
 	ToolDefinition,
 	// Events - Tool Execution
 	ToolExecutionEndEvent,
@@ -161,6 +162,9 @@ export {
 	isWriteToolResult,
 } from "./types.js";
 export {
+	applyToolMiddleware,
+	type ToolMiddlewareFn,
+	type ToolMiddlewareNext,
 	wrapRegisteredTool,
 	wrapRegisteredTools,
 	wrapToolsWithExtensions,

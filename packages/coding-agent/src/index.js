@@ -11,23 +11,18 @@ export { createExtensionRuntime, discoverAndLoadExtensions, ExtensionRunner, isB
 export { convertToLlm } from "./core/messages.js";
 export { ModelRegistry } from "./core/model-registry.js";
 export { DefaultPackageManager } from "./core/package-manager.js";
-// Prompt template system
-export { CircularReferenceError, createPromptRegistry, derivePromptName, ExtendsDepthError, getTemplatesDir, PromptError, PromptNotFoundError, PromptParseError, parsePromptContent, parsePromptFile, renderTemplate, TemplateRenderError, VariableRequiredError, } from "./core/prompt/index.js";
 export { DefaultResourceLoader } from "./core/resource-loader.js";
 // SDK for programmatic usage
-export { 
-// Factory
-createAgentSession, createBashTool, 
-// Tool factories (for custom cwd)
-createCodingTools, createEditTool, createFindTool, createGrepTool, createLsTool, createReadOnlyTools, createReadTool, createWriteTool, 
-// Pre-built tools (use process.cwd())
+export {
+createAgentSession, createBashTool,
+createCodingTools, createEditTool, createReadOnlyTools, createReadTool, createSearchTool, createWriteTool,
 readOnlyTools, } from "./core/sdk.js";
 export { buildSessionContext, CURRENT_SESSION_VERSION, getLatestCompactionEntry, migrateSessionEntries, parseSessionEntries, SessionManager, } from "./core/session-manager.js";
 export { SettingsManager, } from "./core/settings-manager.js";
 // Skills
 export { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, } from "./core/skills.js";
 // Tools
-export { bashTool, codingTools, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, editTool, findTool, formatSize, grepTool, lsTool, readTool, truncateHead, truncateLine, truncateTail, writeTool, } from "./core/tools/index.js";
+export { bashTool, codingTools, createToolsByName, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, editTool, formatSize, readTool, searchTool, toolRegistry, truncateHead, truncateLine, truncateTail, writeTool, } from "./core/tools/index.js";
 // Main entry point
 export { main } from "./main.js";
 // Run modes for programmatic SDK usage

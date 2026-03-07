@@ -6,8 +6,8 @@ import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
 import { getPromptRegistry } from "./prompt-registry.js";
 import { formatSkillsForPrompt, type Skill } from "./skills.js";
 
-/** Minimal tool info needed for system prompt generation */
-export interface ToolInfo {
+/** Minimal tool metadata needed for system prompt generation */
+export interface ToolMetadata {
 	name: string;
 	description: string;
 }
@@ -16,7 +16,7 @@ export interface ToolInfo {
  * Get the short description for a tool.
  * Falls back to first sentence of tool's own description if no prompt template exists.
  */
-function getToolShortDescription(tool: ToolInfo): string {
+function getToolShortDescription(tool: ToolMetadata): string {
 	const registry = getPromptRegistry();
 	try {
 		return registry.render(`tools/${tool.name}-short`);
@@ -31,7 +31,7 @@ export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
 	/** Active tools to list in the prompt. Each must have name and description. */
-	activeTools?: ToolInfo[];
+	activeTools?: ToolMetadata[];
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
 	/** Working directory. Default: process.cwd() */

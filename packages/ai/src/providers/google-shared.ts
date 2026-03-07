@@ -5,6 +5,7 @@
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { serializeGoogleTools } from "./tool-serializers.js";
 import { transformMessages } from "./transform-messages.js";
 
 type GoogleApiType = "google-generative-ai" | "google-gemini-cli" | "google-vertex";
@@ -242,16 +243,7 @@ export function convertTools(
 	tools: Tool[],
 	useParameters = false,
 ): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
-	if (tools.length === 0) return undefined;
-	return [
-		{
-			functionDeclarations: tools.map((tool) => ({
-				name: tool.name,
-				description: tool.description,
-				...(useParameters ? { parameters: tool.parameters } : { parametersJsonSchema: tool.parameters }),
-			})),
-		},
-	];
+	return serializeGoogleTools(tools, useParameters);
 }
 
 /**

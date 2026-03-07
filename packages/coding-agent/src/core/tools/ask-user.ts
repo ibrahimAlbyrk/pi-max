@@ -74,6 +74,7 @@ interface AskUserDetails {
 export const askUserTool: ToolDefinition<typeof AskUserSchema, AskUserDetails> = {
 	name: "ask_user",
 	label: "Ask User",
+	sideEffects: false,
 	description:
 		"Ask the user one or more structured questions when you need clarification, preferences, or decisions before proceeding. Supports single-select, multi-select, text input, and yes/no confirm modes. For a single question, shows a simple list. For multiple, shows tabbed navigation. Use this instead of asking questions in plain text when you need specific, structured answers.",
 	parameters: AskUserSchema,

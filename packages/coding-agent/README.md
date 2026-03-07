@@ -301,6 +301,8 @@ Place in `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, or `.agents/
 
 TypeScript modules that extend pi with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
 
+**Tool architecture:** All tools — built-in, extension, and SDK — flow through a single `ToolRegistry` per session. Extension `tool_call`/`tool_result` event handlers intercept every tool call. Mark a tool with `sideEffects: false` to allow the agent loop to parallelize it with other read-only tools. See [docs/tools-architecture.md](docs/tools-architecture.md).
+
 ```typescript
 export default function (pi: ExtensionAPI) {
   pi.registerTool({ name: "deploy", ... });

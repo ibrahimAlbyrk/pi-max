@@ -79,6 +79,7 @@ interface AskQuestionDetails {
 export const askQuestionTool: ToolDefinition<typeof AskQuestionParams, AskQuestionDetails> = {
 	name: "ask_user_question",
 	label: "Ask User",
+	sideEffects: false,
 	description:
 		"Ask the user one or more structured questions when you need their input to proceed. " +
 		"Supports single-select (pick one), multi-select (toggle multiple), text input, and yes/no confirm modes. " +

@@ -30,6 +30,7 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { adjustMaxTokensForThinking, buildBaseOptions } from "./simple-options.js";
+import { serializeAnthropicTools } from "./tool-serializers.js";
 import { transformMessages } from "./transform-messages.js";
 
 /**
@@ -841,20 +842,7 @@ function convertMessages(
 
 function convertTools(tools: Tool[], isOAuthToken: boolean): Anthropic.Messages.Tool[] {
 	if (!tools) return [];
-
-	return tools.map((tool) => {
-		const jsonSchema = tool.parameters as any; // TypeBox already generates JSON Schema
-
-		return {
-			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
-			description: tool.description,
-			input_schema: {
-				type: "object" as const,
-				properties: jsonSchema.properties || {},
-				required: jsonSchema.required || [],
-			},
-		};
-	});
+	return serializeAnthropicTools(tools, isOAuthToken ? toClaudeCodeName : undefined);
 }
 
 function mapStopReason(reason: Anthropic.Messages.StopReason | string): StopReason {

@@ -14,6 +14,11 @@
 
 - Added `search` built-in tool with content mode parameters: `glob` (file type filter), `literal` (non-regex search), `ignoreCase`, and `context` (surrounding lines)
 - Added `excludeFromContext` field to `CustomMessage` and `CustomMessageEntry`, allowing extension-injected messages to be displayed in TUI but excluded from LLM context (similar to `!!` bash prefix behavior)
+- Added `ToolRegistry` as the canonical runtime authority for built-in, extension, and SDK tools. All tools registered via `pi.registerTool()` or `customTools` flow through it with last-write-wins semantics and duplicate tracking
+- Added registration-time validation and diagnostics API on `ToolRegistry` (`getDiagnostics()`, `validateAll()`) covering name format/length, description, label, schema sanity, and duplicate-override detection
+- Added middleware interception path on `ToolRegistry` (`registerMiddleware()`) for per-tool execution hooks that run inside the extension `tool_call`/`tool_result` interception layer
+- Added `sideEffects?: boolean` to `ToolDefinition` (extension/SDK tools); set to `false` to allow the agent loop to parallelize a tool with other read-only tools
+- Added `docs/tools-architecture.md` documenting the end-to-end tool lifecycle, registry semantics, middleware ordering, and provider serialization layer
 
 ### Fixed
 

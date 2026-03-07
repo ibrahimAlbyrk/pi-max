@@ -1332,6 +1332,47 @@ pi.registerTool({
 
 **Important:** Use `StringEnum` from `@mariozechner/pi-ai` for string enums. `Type.Union`/`Type.Literal` doesn't work with Google's API.
 
+### sideEffects
+
+The optional `sideEffects` field controls whether the agent loop may run a tool concurrently with other read-only tools:
+
+```typescript
+pi.registerTool({
+  name: "fetch_data",
+  label: "Fetch Data",
+  description: "Fetch data from an external API (read-only)",
+  parameters: Type.Object({ url: Type.String() }),
+  sideEffects: false, // safe to parallelize with other read-only tools
+  async execute(toolCallId, params, signal, onUpdate, ctx) { ... },
+});
+```
+
+| Value | Behavior |
+|-------|----------|
+| `false` | Read-only; may be parallelized with other `sideEffects: false` tools |
+| `true` | Has side effects; always executes sequentially |
+| `undefined` | Treated as `true` (safe default) |
+
+Use `sideEffects: false` for file reads, searches, and API queries. Leave it unset or `true` for writes, shell commands, or any operation that modifies state.
+
+### Execution and Registry
+
+Every tool registered via `pi.registerTool()` flows through the session's `ToolRegistry`. Registration uses last-write-wins semantics: an extension tool with the same name as a built-in replaces it, and pi displays a warning in interactive mode.
+
+Tool execution order for each LLM-requested call:
+
+```
+extension tool_call handlers (can block with { block: true })
+  │
+  ▼
+tool.execute()
+  │
+  ▼
+extension tool_result handlers (can modify result)
+```
+
+Extension `tool_call` and `tool_result` event handlers fire around all tool executions, including built-in tools. See [tools-architecture.md](tools-architecture.md) for the full architecture including middleware and provider serialization.
+
 ### Overriding Built-in Tools
 
 Extensions can override built-in tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) by registering a tool with the same name. Interactive mode displays a warning when this happens.

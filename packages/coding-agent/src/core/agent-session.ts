@@ -66,8 +66,6 @@ import {
 	type TreePreparation,
 	type TurnEndEvent,
 	type TurnStartEvent,
-	wrapRegisteredTools,
-	wrapToolsWithExtensions,
 } from "./extensions/index.js";
 import { registerBgCommands } from "./features/bg/commands.js";
 import { setupBgFeature } from "./features/bg/index.js";
@@ -84,6 +82,7 @@ import { getLatestCompactionEntry } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
+import { ToolRegistry } from "./tool-registry.js";
 import { askUserTool } from "./tools/ask-user.js";
 import type { BashOperations } from "./tools/bash.js";
 import { bgToolDefinition } from "./tools/bg.js";
@@ -265,7 +264,7 @@ export class AgentSession {
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
-	private _baseToolRegistry: Map<string, AgentTool> = new Map();
+	private _runtimeRegistry: ToolRegistry = new ToolRegistry();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
@@ -313,7 +312,7 @@ export class AgentSession {
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
 
-	// Tool registry for extension getTools/setTools
+	// Resolved tool map (name → fully wrapped AgentTool) - populated from _runtimeRegistry
 	private _toolRegistry: Map<string, AgentTool> = new Map();
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
@@ -910,11 +909,7 @@ export class AgentSession {
 	 * Get all configured tools with name, description, and parameter schema.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolRegistry.values()).map((t) => ({
-			name: t.name,
-			description: t.description,
-			parameters: t.parameters,
-		}));
+		return this._runtimeRegistry.getToolInfos();
 	}
 
 	/**
@@ -2421,7 +2416,15 @@ export class AgentSession {
 					bash: { commandPrefix: shellCommandPrefix },
 				});
 
-		this._baseToolRegistry = new Map(Object.entries(baseTools).map(([name, tool]) => [name, tool as AgentTool]));
+		// Build the canonical tool registry as single source of truth.
+		// Registration order: built-ins first, then extension tools, then SDK tools.
+		// Last-write-wins semantics ensure SDK tools override same-named built-ins
+		// (e.g. bgToolDefinition overrides the raw createBgTool() instance).
+		const registry = new ToolRegistry();
+
+		for (const [, tool] of Object.entries(baseTools)) {
+			registry.registerBuiltin(tool as AgentTool);
+		}
 
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
@@ -2455,21 +2458,23 @@ export class AgentSession {
 			this._extensionRunner.registerBuiltinExtension("<builtin-lsp>", registerLspCommands);
 			// Register built-in task commands, shortcuts, and widget.
 			this._extensionRunner.registerBuiltinExtension("<builtin-task>", registerTaskCommands);
+
+			// Extension tools registered via pi.registerTool() are added next; all
+			// registrations (including duplicates across extensions) reach ToolRegistry,
+			// which applies last-write-wins semantics so the last-loaded extension's
+			// tool takes effect and overrides same-named built-ins.
+			for (const registeredTool of this._extensionRunner.getAllRegisteredTools()) {
+				registry.registerExtension(registeredTool);
+			}
+
+			// SDK tools (config.customTools + built-in feature tools) are added last so they
+			// take priority over both built-ins and extension tools that share the same name.
+			for (const definition of this._customTools) {
+				registry.registerSdk(definition);
+			}
 		}
 
-		const registeredTools = this._extensionRunner?.getAllRegisteredTools() ?? [];
-		const allCustomTools = [
-			...registeredTools,
-			...this._customTools.map((def) => ({ definition: def, extensionPath: "<sdk>" })),
-		];
-		const wrappedExtensionTools = this._extensionRunner
-			? wrapRegisteredTools(allCustomTools, this._extensionRunner)
-			: [];
-
-		const toolRegistry = new Map(this._baseToolRegistry);
-		for (const tool of wrappedExtensionTools as AgentTool[]) {
-			toolRegistry.set(tool.name, tool);
-		}
+		this._runtimeRegistry = registry;
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
@@ -2477,27 +2482,34 @@ export class AgentSession {
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		const activeToolNameSet = new Set<string>(baseActiveToolNames);
 		if (options.includeAllExtensionTools) {
-			for (const tool of wrappedExtensionTools as AgentTool[]) {
-				activeToolNameSet.add(tool.name);
+			// Activate all non-builtin tools (extension + SDK) automatically.
+			for (const name of registry.getNames()) {
+				if (!registry.isBuiltin(name)) {
+					activeToolNameSet.add(name);
+				}
 			}
 		}
 
-		const extensionToolNames = new Set(wrappedExtensionTools.map((tool) => tool.name));
-		const activeBaseTools = Array.from(activeToolNameSet)
-			.filter((name) => this._baseToolRegistry.has(name) && !extensionToolNames.has(name))
-			.map((name) => this._baseToolRegistry.get(name) as AgentTool);
-		const activeExtensionTools = wrappedExtensionTools.filter((tool) => activeToolNameSet.has(tool.name));
-		const activeToolsArray: AgentTool[] = [...activeBaseTools, ...activeExtensionTools];
+		// Resolve active tool instances (fully wrapped, extension interception included).
+		// resolveActive() owns the complete wrapping pipeline: context injection, middleware,
+		// and extension tool_call/tool_result interception when a runner is available.
+		const activeToolsArray = registry.resolveActive(activeToolNameSet, this._extensionRunner);
+		this.agent.setTools(activeToolsArray);
 
-		if (this._extensionRunner) {
-			const wrappedActiveTools = wrapToolsWithExtensions(activeToolsArray, this._extensionRunner);
-			this.agent.setTools(wrappedActiveTools as AgentTool[]);
+		// Resolve all tools (fully wrapped) for getAllTools() and setActiveToolsByName() lookups.
+		this._toolRegistry = registry.resolveAll(this._extensionRunner);
 
-			const wrappedAllTools = wrapToolsWithExtensions(Array.from(toolRegistry.values()), this._extensionRunner);
-			this._toolRegistry = new Map(wrappedAllTools.map((tool) => [tool.name, tool]));
-		} else {
-			this.agent.setTools(activeToolsArray);
-			this._toolRegistry = toolRegistry;
+		// Surface registration-time diagnostics. Warnings indicate potential issues that
+		// may cause LLM providers to reject a tool (bad name format, empty description,
+		// non-object schema). Info-level issues (empty label, duplicate override) are
+		// logged only when present. Runtime behavior is unchanged; tools are never dropped.
+		const diagnostics = registry.validateAll();
+		for (const diag of diagnostics) {
+			for (const issue of diag.issues) {
+				if (issue.severity === "warning") {
+					console.warn(`[tool-registry] ${issue.message}`);
+				}
+			}
 		}
 
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.agent.state.tools as AgentTool[]);

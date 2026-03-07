@@ -13,6 +13,7 @@ import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "
 import { DEFAULT_KEYBINDINGS, type KeyId } from "../src/core/keybindings.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
 import { SessionManager } from "../src/core/session-manager.js";
+import { ToolRegistry } from "../src/core/tool-registry.js";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -280,7 +281,7 @@ describe("ExtensionRunner", () => {
 			expect(tools.map((t) => t.definition.name).sort()).toEqual(["tool_a", "tool_b"]);
 		});
 
-		it("keeps first tool when two extensions register the same name", async () => {
+		it("returns all tools including duplicates (deduplication is ToolRegistry's responsibility)", async () => {
 			const first = `
 				import { Type } from "@sinclair/typebox";
 				export default function(pi) {
@@ -312,8 +313,10 @@ describe("ExtensionRunner", () => {
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
 			const tools = runner.getAllRegisteredTools();
 
-			expect(tools).toHaveLength(1);
-			expect(tools[0]?.definition.description).toBe("first");
+			// Both registrations are returned — no pre-deduplication in the runner.
+			// ToolRegistry is responsible for deduplication (last-write-wins).
+			expect(tools).toHaveLength(2);
+			expect(tools.map((t) => t.definition.description).sort()).toEqual(["first", "second"]);
 		});
 	});
 
@@ -657,6 +660,64 @@ describe("ExtensionRunner", () => {
 
 			expect(runner.hasHandlers("tool_call")).toBe(true);
 			expect(runner.hasHandlers("agent_end")).toBe(false);
+		});
+	});
+
+	describe("ToolRegistry duplicate handling (last-write-wins)", () => {
+		it("ToolRegistry receives all duplicate extension tools and last-loaded extension wins", async () => {
+			const first = `
+				import { Type } from "@sinclair/typebox";
+				export default function(pi) {
+					pi.registerTool({
+						name: "shared",
+						label: "shared",
+						description: "first",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "first" }], details: {} }),
+					});
+				}
+			`;
+			const second = `
+				import { Type } from "@sinclair/typebox";
+				export default function(pi) {
+					pi.registerTool({
+						name: "shared",
+						label: "shared",
+						description: "second",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "second" }], details: {} }),
+					});
+				}
+			`;
+			// "a-first.ts" loads before "b-second.ts" alphabetically
+			fs.writeFileSync(path.join(extensionsDir, "a-first.ts"), first);
+			fs.writeFileSync(path.join(extensionsDir, "b-second.ts"), second);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			// getAllRegisteredTools() returns all registrations without pre-deduplication
+			const tools = runner.getAllRegisteredTools();
+			expect(tools).toHaveLength(2);
+
+			// Feed all tools into ToolRegistry (mirrors what AgentSession does)
+			const registry = new ToolRegistry();
+			for (const registeredTool of tools) {
+				registry.registerExtension(registeredTool);
+			}
+
+			// ToolRegistry last-write-wins: the last-loaded extension's tool takes effect
+			const entry = registry.getEntry("shared");
+			expect(entry).toBeDefined();
+			expect(entry?.origin).toBe("extension");
+			if (entry?.origin === "extension") {
+				expect(entry.registeredTool.definition.description).toBe("second");
+			}
+
+			// Duplicate is recorded for diagnostic purposes
+			const duplicates = registry.getDuplicates();
+			expect(duplicates).toHaveLength(1);
+			expect(duplicates[0]?.name).toBe("shared");
 		});
 	});
 });

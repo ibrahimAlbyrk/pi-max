@@ -130,10 +130,8 @@ export type {
 export {
 	isBashToolResult,
 	isEditToolResult,
-	isFindToolResult,
-	isGrepToolResult,
-	isLsToolResult,
 	isReadToolResult,
+	isSearchToolResult,
 	isToolCallEventType,
 	isWriteToolResult,
 } from "./types.js";

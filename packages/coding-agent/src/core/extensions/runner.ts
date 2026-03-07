@@ -313,17 +313,26 @@ export class ExtensionRunner {
 		return this.extensions.map((e) => e.path);
 	}
 
-	/** Get all registered tools from all extensions (first registration per name wins). */
+	/**
+	 * Get all registered tools from all extensions, including duplicates.
+	 *
+	 * Tools are returned in extension-load order (all tools from the first extension,
+	 * then all tools from the second extension, etc.). Duplicate tool names across
+	 * extensions are included — callers are responsible for handling duplicates.
+	 *
+	 * The canonical place for duplicate handling is ToolRegistry, which uses
+	 * last-write-wins semantics. Callers that feed this list into ToolRegistry
+	 * (e.g. AgentSession) should do so in the order returned here so that the
+	 * last-loaded extension's tool is the one that takes effect.
+	 */
 	getAllRegisteredTools(): RegisteredTool[] {
-		const toolsByName = new Map<string, RegisteredTool>();
+		const tools: RegisteredTool[] = [];
 		for (const ext of this.extensions) {
 			for (const tool of ext.tools.values()) {
-				if (!toolsByName.has(tool.definition.name)) {
-					toolsByName.set(tool.definition.name, tool);
-				}
+				tools.push(tool);
 			}
 		}
-		return Array.from(toolsByName.values());
+		return tools;
 	}
 
 	/** Get a tool definition by name. Returns undefined if not found. */

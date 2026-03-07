@@ -12,6 +12,7 @@ import type {
 	AgentMessage,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	BaseToolDefinition,
 	ThinkingLevel,
 } from "@mariozechner/pi-agent-core";
 import type {
@@ -70,7 +71,7 @@ import type {
 } from "../tools/index.js";
 
 export type { ExecOptions, ExecResult } from "../exec.js";
-export type { AgentToolResult, AgentToolUpdateCallback };
+export type { AgentToolResult, AgentToolUpdateCallback, BaseToolDefinition };
 export type {
 	QuestionAnswer,
 	QuestionDialogConfig,
@@ -364,16 +365,25 @@ export interface ToolRenderResultOptions {
 
 /**
  * Tool definition for registerTool().
+ * Extends BaseToolDefinition (name/label/description/parameters) with coding-agent-specific execute signature.
  */
-export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown> {
-	/** Tool name (used in LLM tool calls) */
-	name: string;
-	/** Human-readable label for UI */
-	label: string;
-	/** Description for LLM */
-	description: string;
-	/** Parameter schema (TypeBox) */
-	parameters: TParams;
+export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown>
+	extends BaseToolDefinition<TParams> {
+	/**
+	 * Whether this tool has side effects (writes files, runs commands, modifies state).
+	 *
+	 * Set to false only for read-only operations (file reads, searches, API queries).
+	 * Default behavior (undefined): treated as true (safe fallback).
+	 *
+	 * Tools with sideEffects !== false run sequentially.
+	 * Tools with sideEffects === false can be parallelized in batches with other read-only tools.
+	 *
+	 * @example
+	 * sideEffects: false  // read, search, fetch, query operations
+	 * sideEffects: true   // write, delete, execute, modify operations
+	 * (undefined)         // Unknown tools default to true (assume side effects)
+	 */
+	sideEffects?: boolean;
 
 	/** Execute the tool. */
 	execute(

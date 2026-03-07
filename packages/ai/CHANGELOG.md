@@ -5,6 +5,7 @@
 ### Added
 
 - Added Kimi Code OAuth login support (device code flow) for `/login` menu
+- Added shared tool serialization layer in `packages/ai/src/providers/tool-serializers.ts` with dedicated functions per provider: `serializeAnthropicTools`, `serializeOpenAIResponsesTools`, `serializeOpenAICompletionsTools`, `serializeGoogleTools`, and `serializeBedrockTools`. Provider streaming files delegate to these instead of duplicating conversion logic
 
 ## [0.55.3] - 2026-02-27
 

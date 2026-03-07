@@ -54,6 +54,7 @@ export type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	AppAction,
+	BaseToolDefinition,
 	BashToolCallEvent,
 	BeforeAgentStartEvent,
 	CompactOptions,
@@ -215,6 +216,15 @@ export {
 	type Skill,
 	type SkillFrontmatter,
 } from "./core/skills.js";
+// Tool registry
+export {
+	type BuiltinToolEntry,
+	type ExtensionOrSdkToolEntry,
+	type ToolOrigin,
+	ToolRegistry,
+	type ToolRegistryDuplicate,
+	type ToolRegistryEntry,
+} from "./core/tool-registry.js";
 // Tools
 export {
 	type BashOperations,

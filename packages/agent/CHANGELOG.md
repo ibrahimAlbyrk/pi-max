@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `BaseToolDefinition<TParameters>` interface extending `Tool` (from `@mariozechner/pi-ai`) with a `label` field. Serves as the shared metadata base for both `AgentTool` and coding-agent's `ToolDefinition`
+- Added `sideEffects?: boolean` to `AgentTool`; when `false`, the agent loop may parallelize the tool with other read-only tools (up to `maxParallelTools`)
+
 ## [0.55.3] - 2026-02-27
 
 ## [0.55.2] - 2026-02-27

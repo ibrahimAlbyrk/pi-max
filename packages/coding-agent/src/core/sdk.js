@@ -11,12 +11,12 @@ import { DefaultResourceLoader } from "./resource-loader.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { time } from "./timings.js";
-import { allTools, bashTool, codingTools, createBashTool, createCodingTools, createEditTool, createFindTool, createGrepTool, createLsTool, createReadOnlyTools, createReadTool, createWriteTool, editTool, findTool, grepTool, lsTool, readOnlyTools, readTool, writeTool, } from "./tools/index.js";
-export { 
+import { allTools, bashTool, codingTools, createBashTool, createCodingTools, createEditTool, createReadOnlyTools, createReadTool, createSearchTool, createWriteTool, editTool, readOnlyTools, readTool, searchTool, writeTool, } from "./tools/index.js";
+export {
 // Pre-built tools (use process.cwd())
-readTool, bashTool, editTool, writeTool, grepTool, findTool, lsTool, codingTools, readOnlyTools, allTools as allBuiltInTools, 
+readTool, bashTool, editTool, writeTool, searchTool, codingTools, readOnlyTools, allTools as allBuiltInTools,
 // Tool factories (for custom cwd)
-createCodingTools, createReadOnlyTools, createReadTool, createBashTool, createEditTool, createWriteTool, createGrepTool, createFindTool, createLsTool, };
+createCodingTools, createReadOnlyTools, createReadTool, createBashTool, createEditTool, createWriteTool, createSearchTool, };
 // Helper Functions
 function getDefaultAgentDir() {
     return getAgentDir();

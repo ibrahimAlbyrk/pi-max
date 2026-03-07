@@ -31,6 +31,7 @@ import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
+import { serializeOpenAICompletionsToolsFromCompat } from "./tool-serializers.js";
 import { transformMessages } from "./transform-messages.js";
 
 /**
@@ -726,16 +727,7 @@ function convertTools(
 	tools: Tool[],
 	compat: Required<OpenAICompletionsCompat>,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
-	return tools.map((tool) => ({
-		type: "function",
-		function: {
-			name: tool.name,
-			description: tool.description,
-			parameters: tool.parameters as any, // TypeBox already generates JSON Schema
-			// Only include strict if provider supports it. Some reject unknown fields.
-			...(compat.supportsStrictMode !== false && { strict: false }),
-		},
-	}));
+	return serializeOpenAICompletionsToolsFromCompat(tools, compat);
 }
 
 function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"]): StopReason {
