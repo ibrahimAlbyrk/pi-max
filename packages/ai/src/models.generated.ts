@@ -12211,7 +12211,7 @@ export const MODELS = {
 				cacheRead: 0.25,
 				cacheWrite: 0,
 			},
-			contextWindow: 1050000,
+			contextWindow: 200000,
 			maxTokens: 128000,
 		} satisfies Model<"anthropic-messages">,
 		"openai/gpt-5.4-pro": {
