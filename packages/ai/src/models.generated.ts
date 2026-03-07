@@ -11483,6 +11483,23 @@ export const MODELS = {
 			contextWindow: 204800,
 			maxTokens: 131000,
 		} satisfies Model<"anthropic-messages">,
+		"minimax/minimax-m2.5-highspeed": {
+			id: "minimax/minimax-m2.5-highspeed",
+			name: "MiniMax M2.5 High Speed",
+			api: "anthropic-messages",
+			provider: "vercel-ai-gateway",
+			baseUrl: "https://ai-gateway.vercel.sh",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.6,
+				output: 2.4,
+				cacheRead: 0.03,
+				cacheWrite: 0.375,
+			},
+			contextWindow: 4096,
+			maxTokens: 4096,
+		} satisfies Model<"anthropic-messages">,
 		"mistral/codestral": {
 			id: "mistral/codestral",
 			name: "Mistral Codestral",
