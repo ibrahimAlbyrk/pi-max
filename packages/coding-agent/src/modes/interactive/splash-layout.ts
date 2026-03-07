@@ -240,14 +240,23 @@ class VerticallyCenteredContainer implements Component {
 		const termHeight = this.ui.terminal.rows;
 		const contentHeight = contentLines.length;
 
-		// Layout as if footer doesn't exist (bottom children position unchanged)
-		const topPad = Math.max(0, Math.floor((termHeight - contentHeight) / 2));
-		const bottomPad = Math.max(0, termHeight - topPad - contentHeight - bottomLines.length);
+		// Reserve space for bottom children so they always stay visible.
+		// If main content is too tall, clip it from the top rather than
+		// pushing bottom children off screen.
+		const reservedBottom = bottomLines.length;
+		const availableForContent = Math.max(0, termHeight - reservedBottom);
+		const topPad = Math.max(0, Math.floor((availableForContent - contentHeight) / 2));
+		const maxContentLines = Math.max(0, availableForContent - topPad);
+		const visibleContent =
+			contentLines.length <= maxContentLines
+				? contentLines
+				: contentLines.slice(contentLines.length - maxContentLines);
+		const bottomPad = Math.max(0, availableForContent - topPad - visibleContent.length);
 
 		// Build result without footer first
 		const result: string[] = [];
 		for (let i = 0; i < topPad; i++) result.push("");
-		result.push(...contentLines);
+		result.push(...visibleContent);
 		for (let i = 0; i < bottomPad; i++) result.push("");
 		result.push(...bottomLines);
 
