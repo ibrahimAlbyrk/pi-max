@@ -3250,9 +3250,9 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
+				input: 0.5,
+				output: 3,
+				cacheRead: 0.05,
 				cacheWrite: 0,
 			},
 			contextWindow: 1048576,
@@ -4571,7 +4571,7 @@ export const MODELS = {
 	"mistral": {
 		"codestral-latest": {
 			id: "codestral-latest",
-			name: "Codestral",
+			name: "Codestral (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -4622,7 +4622,7 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 		"devstral-medium-latest": {
 			id: "devstral-medium-latest",
-			name: "Devstral 2",
+			name: "Devstral 2 (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -4690,7 +4690,7 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 		"magistral-medium-latest": {
 			id: "magistral-medium-latest",
-			name: "Magistral Medium",
+			name: "Magistral Medium (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -4724,7 +4724,7 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 		"ministral-3b-latest": {
 			id: "ministral-3b-latest",
-			name: "Ministral 3B",
+			name: "Ministral 3B (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -4741,7 +4741,7 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 		"ministral-8b-latest": {
 			id: "ministral-8b-latest",
-			name: "Ministral 8B",
+			name: "Ministral 8B (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -4792,7 +4792,7 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 		"mistral-large-latest": {
 			id: "mistral-large-latest",
-			name: "Mistral Large",
+			name: "Mistral Large (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -4843,7 +4843,7 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 		"mistral-medium-latest": {
 			id: "mistral-medium-latest",
-			name: "Mistral Medium",
+			name: "Mistral Medium (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -4894,7 +4894,7 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 		"mistral-small-latest": {
 			id: "mistral-small-latest",
-			name: "Mistral Small",
+			name: "Mistral Small (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -4979,7 +4979,7 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 		"pixtral-large-latest": {
 			id: "pixtral-large-latest",
-			name: "Pixtral Large",
+			name: "Pixtral Large (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -12228,7 +12228,7 @@ export const MODELS = {
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: 1050000,
+			contextWindow: 200000,
 			maxTokens: 128000,
 		} satisfies Model<"anthropic-messages">,
 		"openai/gpt-oss-120b": {
@@ -12792,6 +12792,23 @@ export const MODELS = {
 			contextWindow: 202752,
 			maxTokens: 120000,
 		} satisfies Model<"anthropic-messages">,
+		"zai/glm-4.7-flash": {
+			id: "zai/glm-4.7-flash",
+			name: "GLM 4.7 Flash",
+			api: "anthropic-messages",
+			provider: "vercel-ai-gateway",
+			baseUrl: "https://ai-gateway.vercel.sh",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.07,
+				output: 0.39999999999999997,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 200000,
+			maxTokens: 131000,
+		} satisfies Model<"anthropic-messages">,
 		"zai/glm-4.7-flashx": {
 			id: "zai/glm-4.7-flashx",
 			name: "GLM 4.7 FlashX",
@@ -12811,20 +12828,20 @@ export const MODELS = {
 		} satisfies Model<"anthropic-messages">,
 		"zai/glm-5": {
 			id: "zai/glm-5",
-			name: "GLM-5",
+			name: "GLM 5",
 			api: "anthropic-messages",
 			provider: "vercel-ai-gateway",
 			baseUrl: "https://ai-gateway.vercel.sh",
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 1,
-				output: 3.1999999999999997,
-				cacheRead: 0.19999999999999998,
+				input: 0.7999999999999999,
+				output: 2.56,
+				cacheRead: 0.16,
 				cacheWrite: 0,
 			},
 			contextWindow: 202800,
-			maxTokens: 131072,
+			maxTokens: 131100,
 		} satisfies Model<"anthropic-messages">,
 	},
 	"xai": {
