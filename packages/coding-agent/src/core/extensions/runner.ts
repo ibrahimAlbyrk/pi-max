@@ -231,7 +231,7 @@ export class ExtensionRunner {
 		modelRegistry: ModelRegistry,
 		eventBus?: EventBus,
 	) {
-		this.extensions = extensions;
+		this.extensions = [...extensions];
 		this.runtime = runtime;
 		this.uiContext = noOpUIContext;
 		this.cwd = cwd;
