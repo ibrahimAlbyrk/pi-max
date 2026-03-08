@@ -27,6 +27,7 @@ export interface Args {
 	models?: string[];
 	tools?: ToolName[];
 	noTools?: boolean;
+	noRestrictions?: boolean;
 	extensions?: string[];
 	noExtensions?: boolean;
 	print?: boolean;
@@ -95,6 +96,8 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 			result.models = args[++i].split(",").map((s) => s.trim());
 		} else if (arg === "--no-tools") {
 			result.noTools = true;
+		} else if (arg === "--no-restrictions") {
+			result.noRestrictions = true;
 		} else if (arg === "--tools" && i + 1 < args.length) {
 			const toolNames = args[++i].split(",").map((s) => s.trim());
 			const validTools: ToolName[] = [];
@@ -206,6 +209,7 @@ ${chalk.bold("Options:")}
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
   --no-tools                     Disable all built-in tools
+  --no-restrictions              Disable all restrictions (filesystem, bash, tool sandbox)
   --tools <tools>                Comma-separated list of tools to enable (default: read,bash,edit,write,webfetch,websearch)
                                  Available: read, bash, edit, write, grep, find, ls, webfetch, websearch
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh

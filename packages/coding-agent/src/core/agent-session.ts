@@ -71,6 +71,8 @@ import { registerBgCommands } from "./features/bg/commands.js";
 import { setupBgFeature } from "./features/bg/index.js";
 import { registerLspCommands } from "./features/lsp/commands.js";
 import { setupLspFeature } from "./features/lsp/index.js";
+import type { RestrictionChecker } from "./features/restrictions/index.js";
+import { setupRestrictionsFeature, wrapToolWithRestrictions } from "./features/restrictions/index.js";
 import { registerTaskCommands } from "./features/task/commands.js";
 import { setupTaskFeature } from "./features/task/index.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
@@ -159,6 +161,8 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
+	/** Disable all restrictions (--no-restrictions flag) */
+	noRestrictions?: boolean;
 }
 
 export interface ExtensionBindings {
@@ -275,6 +279,10 @@ export class AgentSession {
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
 
+	// Restrictions feature
+	private _restrictionChecker: RestrictionChecker | null = null;
+	private _noRestrictions: boolean;
+
 	// Built-in feature hooks
 	private _builtinShutdownHandlers: Array<() => Promise<void>> = [];
 	private _builtinSessionStartHandlers: Array<(ctx: { cwd: string }) => Promise<void>> = [];
@@ -338,6 +346,7 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._baseToolsOverride = config.baseToolsOverride;
+		this._noRestrictions = config.noRestrictions ?? false;
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -351,6 +360,7 @@ export class AgentSession {
 		setupBgFeature(this);
 		setupLspFeature(this);
 		setupTaskFeature(this);
+		setupRestrictionsFeature(this);
 	}
 
 	/** Model registry for API key resolution and model discovery */
@@ -811,6 +821,41 @@ export class AgentSession {
 	 */
 	onSessionFork(handler: (event: { previousSessionFile: string | undefined }) => Promise<void>): void {
 		this._builtinSessionForkHandlers.push(handler);
+	}
+
+	// =========================================================================
+	// Restrictions Feature Interface
+	// =========================================================================
+
+	/** Set or clear the restriction checker used by tool wrapping. */
+	setRestrictionChecker(checker: RestrictionChecker | null): void {
+		this._restrictionChecker = checker;
+		// Re-build runtime to apply/remove restriction wrapping on tools
+		this._buildRuntime({
+			activeToolNames: this._initialActiveToolNames,
+			includeAllExtensionTools: true,
+		});
+	}
+
+	/** Get UI context for restriction confirmations and notifications. */
+	getRestrictionUIContext() {
+		if (!this._extensionUIContext) return undefined;
+		const uiCtx = this._extensionUIContext;
+		return {
+			confirm: (title: string, message: string) => uiCtx.confirm(title, message),
+			notify: (message: string, type: "info" | "warning" | "error") => uiCtx.notify(message, type),
+			hasUI: !!this._extensionUIContext,
+		};
+	}
+
+	/** Check if --no-restrictions flag is set. */
+	isNoRestrictions(): boolean {
+		return this._noRestrictions;
+	}
+
+	/** Get the current restriction checker (used by tool resolution). */
+	getRestrictionChecker(): RestrictionChecker | null {
+		return this._restrictionChecker;
 	}
 
 	/**
@@ -2493,11 +2538,28 @@ export class AgentSession {
 		// Resolve active tool instances (fully wrapped, extension interception included).
 		// resolveActive() owns the complete wrapping pipeline: context injection, middleware,
 		// and extension tool_call/tool_result interception when a runner is available.
-		const activeToolsArray = registry.resolveActive(activeToolNameSet, this._extensionRunner);
+		let activeToolsArray = registry.resolveActive(activeToolNameSet, this._extensionRunner);
+
+		// Apply restriction wrapping on top of extension wrapping.
+		// Restrictions run BEFORE extensions, so blocked tools never reach extension handlers.
+		if (this._restrictionChecker) {
+			activeToolsArray = activeToolsArray.map((tool) => wrapToolWithRestrictions(tool, this._restrictionChecker!));
+		}
+
 		this.agent.setTools(activeToolsArray);
 
 		// Resolve all tools (fully wrapped) for getAllTools() and setActiveToolsByName() lookups.
-		this._toolRegistry = registry.resolveAll(this._extensionRunner);
+		let toolRegistry = registry.resolveAll(this._extensionRunner);
+
+		if (this._restrictionChecker) {
+			const wrapped = new Map<string, AgentTool>();
+			for (const [name, tool] of toolRegistry) {
+				wrapped.set(name, wrapToolWithRestrictions(tool, this._restrictionChecker));
+			}
+			toolRegistry = wrapped;
+		}
+
+		this._toolRegistry = toolRegistry;
 
 		// Surface registration-time diagnostics. Warnings indicate potential issues that
 		// may cause LLM providers to reject a tool (bad name format, empty description,

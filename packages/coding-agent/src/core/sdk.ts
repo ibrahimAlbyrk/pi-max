@@ -65,6 +65,9 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
+
+	/** Disable all restrictions (--no-restrictions flag). Default: false */
+	noRestrictions?: boolean;
 }
 
 /** Result from createAgentSession */
@@ -347,6 +350,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRegistry,
 		initialActiveToolNames,
 		extensionRunnerRef,
+		noRestrictions: options.noRestrictions,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

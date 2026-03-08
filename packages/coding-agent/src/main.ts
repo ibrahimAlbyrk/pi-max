@@ -513,6 +513,11 @@ function buildSessionOptions(
 		options.tools = parsed.tools.map((name) => allTools[name]);
 	}
 
+	// Restrictions
+	if (parsed.noRestrictions) {
+		options.noRestrictions = true;
+	}
+
 	return { options, cliThinkingFromModel };
 }
 
