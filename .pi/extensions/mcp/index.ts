@@ -13,17 +13,18 @@
  *   that delegates to a freshly wired call-tool once the session is ready.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { ToolCatalog } from "./catalog.js";
 import { McpClientPool } from "./pool.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, saveConfig } from "./config.js";
 import { createSearchTool } from "./tools/search.js";
 import { createCallTool } from "./tools/call.js";
+import { createMcpCommand } from "./commands/mcp.js";
 import { buildMcpSystemPrompt } from "./prompt.js";
 import { QUALIFIED_NAME_SEPARATOR } from "./constants.js";
-import type { CatalogEntry, McpConfig } from "./types.js";
+import type { CatalogEntry, McpConfig, ParameterInfo } from "./types.js";
 
 export default function (pi: ExtensionAPI) {
 	// ── Shared session state ───────────────────────────────────────────────────
@@ -56,14 +57,28 @@ export default function (pi: ExtensionAPI) {
 	/** Convert raw MCP Tool descriptors into lightweight CatalogEntry objects. */
 	function buildCatalogEntries(serverName: string, tools: Tool[]): CatalogEntry[] {
 		return tools.map((tool): CatalogEntry => {
-			const properties = tool.inputSchema?.properties;
+			const properties = tool.inputSchema?.properties as
+				| Record<string, Record<string, unknown>>
+				| undefined;
+			const requiredSet = new Set(
+				Array.isArray(tool.inputSchema?.required) ? tool.inputSchema.required : [],
+			);
 			const parameterSummary = properties ? Object.keys(properties) : [];
+			const parameters: ParameterInfo[] = properties
+				? Object.entries(properties).map(([name, schema]) => ({
+						name,
+						type: typeof schema?.type === "string" ? schema.type : "unknown",
+						description: typeof schema?.description === "string" ? schema.description : "",
+						required: requiredSet.has(name),
+					}))
+				: [];
 			return {
 				serverName,
 				toolName: tool.name,
 				qualifiedName: `${serverName}${QUALIFIED_NAME_SEPARATOR}${tool.name}`,
 				description: tool.description ?? "",
 				parameterSummary,
+				parameters,
 			};
 		});
 	}
@@ -100,9 +115,11 @@ export default function (pi: ExtensionAPI) {
 					successCount++;
 					totalToolCount += entries.length;
 
-					// Disconnect immediately — this was a metadata-only connection.
-					// The next real mcp_call will lazy-reconnect as needed.
-					await currentPool.disconnect(serverName);
+					// Disconnect after catalog fetch — unless lazyConnect is false,
+					// meaning the user wants a persistent connection.
+					if (currentConfig.servers[serverName].lazyConnect !== false) {
+						await currentPool.disconnect(serverName);
+					}
 				} catch (err) {
 					notify?.(
 						`MCP: Failed to connect to '${serverName}': ${err instanceof Error ? err.message : String(err)}`,
@@ -195,6 +212,24 @@ export default function (pi: ExtensionAPI) {
 			return cachedCallTool.execute(toolCallId, params, signal, onUpdate, ctx);
 		},
 	});
+
+	// ── /mcp command ───────────────────────────────────────────────────────────
+
+	const mcpCommand = createMcpCommand({
+		getConfig: () => config,
+		getPool: () => pool,
+		getCatalog: () => catalog,
+		async saveAndReload(ctx: ExtensionCommandContext, newConfig: McpConfig, scope: "local" | "global") {
+			saveConfig(ctx.cwd, newConfig, scope);
+			await ctx.reload();
+		},
+		async reconnectServer(serverName: string) {
+			if (!pool) throw new Error("No active connection pool");
+			await pool.disconnect(serverName);
+			await pool.getClient(serverName);
+		},
+	});
+	pi.registerCommand("mcp", mcpCommand);
 
 	// ── Event handlers ─────────────────────────────────────────────────────────
 
