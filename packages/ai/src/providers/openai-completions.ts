@@ -10,6 +10,7 @@ import type {
 } from "openai/resources/chat/completions.js";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost, supportsXhigh } from "../models.js";
+import { flattenSystemPrompt } from "../prompt-utils.js";
 import type {
 	AssistantMessage,
 	Context,
@@ -517,10 +518,11 @@ export function convertMessages(
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
 
-	if (context.systemPrompt) {
+	const systemPromptText = flattenSystemPrompt(context.systemPrompt);
+	if (systemPromptText) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
 		const role = useDeveloperRole ? "developer" : "system";
-		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
+		params.push({ role: role, content: sanitizeSurrogates(systemPromptText) });
 	}
 
 	let lastRole: string | null = null;

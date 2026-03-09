@@ -12,6 +12,7 @@ import type {
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
 import { calculateCost } from "../models.js";
+import { flattenSystemPrompt } from "../prompt-utils.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -98,11 +99,12 @@ export function convertResponsesMessages<TApi extends Api>(
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-	if (includeSystemPrompt && context.systemPrompt) {
+	const systemPromptText = flattenSystemPrompt(context.systemPrompt);
+	if (includeSystemPrompt && systemPromptText) {
 		const role = model.reasoning ? "developer" : "system";
 		messages.push({
 			role,
-			content: sanitizeSurrogates(context.systemPrompt),
+			content: sanitizeSurrogates(systemPromptText),
 		});
 	}
 

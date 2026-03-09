@@ -6,6 +6,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost } from "../models.js";
+import { normalizeSystemPrompt } from "../prompt-utils.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -599,31 +600,30 @@ function buildParams(
 		stream: true,
 	};
 
-	// For OAuth tokens, we MUST include Claude Code identity
-	if (isOAuthToken) {
-		params.system = [
-			{
+	// Build system prompt blocks with per-block cache control
+	const systemBlocks = normalizeSystemPrompt(context.systemPrompt);
+	if (isOAuthToken || systemBlocks.length > 0) {
+		const system: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "1h" } }> = [];
+
+		// For OAuth tokens, we MUST include Claude Code identity
+		if (isOAuthToken) {
+			system.push({
 				type: "text",
 				text: "You are Claude Code, Anthropic's official CLI for Claude.",
 				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
-		if (context.systemPrompt) {
-			params.system.push({
-				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
 			});
 		}
-	} else if (context.systemPrompt) {
-		// Add cache control to system prompt for non-OAuth tokens
-		params.system = [
-			{
+
+		// Map each block to a content block with its own cache breakpoint
+		for (const block of systemBlocks) {
+			system.push({
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
+				text: sanitizeSurrogates(block.text),
+				...(block.cache !== false && cacheControl ? { cache_control: cacheControl } : {}),
+			});
+		}
+
+		params.system = system;
 	}
 
 	// Temperature is incompatible with extended thinking (adaptive or budget-based).

@@ -206,8 +206,28 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	parameters: TParameters;
 }
 
+/**
+ * A single block of the system prompt. Multiple blocks enable per-block cache
+ * breakpoints on providers that support them (Anthropic, Bedrock).
+ */
+export interface SystemPromptBlock {
+	text: string;
+	/**
+	 * Whether to add a cache breakpoint after this block.
+	 * When true (default), providers that support prompt caching will attach
+	 * cache_control metadata to this block.
+	 */
+	cache?: boolean;
+}
+
 export interface Context {
-	systemPrompt?: string;
+	/**
+	 * System prompt as a plain string or an array of blocks for cache-aware splitting.
+	 * When an array, each block maps to a separate provider content block with its own
+	 * cache breakpoint. Providers that don't support multi-block system prompts flatten
+	 * the array to a single string.
+	 */
+	systemPrompt?: string | SystemPromptBlock[];
 	messages: Message[];
 	tools?: Tool[];
 }

@@ -6,6 +6,7 @@
 
 import type { Content, ThinkingConfig } from "@google/genai";
 import { calculateCost } from "../models.js";
+import { flattenSystemPrompt } from "../prompt-utils.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -880,9 +881,10 @@ export function buildRequest(
 	request.sessionId = options.sessionId;
 
 	// System instruction must be object with parts, not plain string
-	if (context.systemPrompt) {
+	const systemPromptText = flattenSystemPrompt(context.systemPrompt);
+	if (systemPromptText) {
 		request.systemInstruction = {
-			parts: [{ text: sanitizeSurrogates(context.systemPrompt) }],
+			parts: [{ text: sanitizeSurrogates(systemPromptText) }],
 		};
 	}
 

@@ -9,6 +9,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 import type { Tool as OpenAITool, ResponseInput, ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { supportsXhigh } from "../models.js";
+import { flattenSystemPrompt } from "../prompt-utils.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -287,7 +288,7 @@ function buildRequestBody(
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: context.systemPrompt,
+		instructions: flattenSystemPrompt(context.systemPrompt),
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "medium" },
 		include: ["reasoning.encrypted_content"],

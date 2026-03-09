@@ -20,6 +20,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 
 import { calculateCost } from "../models.js";
+import { normalizeSystemPrompt } from "../prompt-utils.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -446,22 +447,28 @@ function supportsThinkingSignature(model: Model<"bedrock-converse-stream">): boo
 }
 
 function buildSystemPrompt(
-	systemPrompt: string | undefined,
+	systemPrompt: Context["systemPrompt"],
 	model: Model<"bedrock-converse-stream">,
 	cacheRetention: CacheRetention,
 ): SystemContentBlock[] | undefined {
-	if (!systemPrompt) return undefined;
+	const promptBlocks = normalizeSystemPrompt(systemPrompt);
+	if (promptBlocks.length === 0) return undefined;
 
-	const blocks: SystemContentBlock[] = [{ text: sanitizeSurrogates(systemPrompt) }];
-
-	// Add cache point for supported Claude models when caching is enabled
-	if (cacheRetention !== "none" && supportsPromptCaching(model)) {
-		blocks.push({
-			cachePoint: { type: CachePointType.DEFAULT, ...(cacheRetention === "long" ? { ttl: CacheTTL.ONE_HOUR } : {}) },
-		});
+	const result: SystemContentBlock[] = [];
+	for (const block of promptBlocks) {
+		result.push({ text: sanitizeSurrogates(block.text) });
+		// Add per-block cache point for supported Claude models when caching is enabled
+		if (block.cache !== false && cacheRetention !== "none" && supportsPromptCaching(model)) {
+			result.push({
+				cachePoint: {
+					type: CachePointType.DEFAULT,
+					...(cacheRetention === "long" ? { ttl: CacheTTL.ONE_HOUR } : {}),
+				},
+			});
+		}
 	}
 
-	return blocks;
+	return result;
 }
 
 function normalizeToolCallId(id: string): string {
