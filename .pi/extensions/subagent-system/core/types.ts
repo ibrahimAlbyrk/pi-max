@@ -266,6 +266,9 @@ export interface SpawnOptions {
   model?: string;
   thinking?: ThinkingLevel;
 
+  // Execution mode: foreground (default) or background (background=true)
+  background?: boolean;
+
   // Messaging permissions
   messaging?: MessagingConfig;
 
@@ -275,8 +278,9 @@ export interface SpawnOptions {
   // Common
   task: string;
 
-  // Inherited from main agent (set by manager)
+  // Internal: set by manager, not by callers
   _mainThinkingLevel?: ThinkingLevel;
   _mainModel?: any; // Model<any> from pi — passed directly to avoid resolution issues
   _resolvedApiKey?: string; // Pre-resolved API key from parent to avoid OAuth lock contention
+  _isForeground?: boolean; // Set by spawn_agent tool, used by manager for tracking
 }

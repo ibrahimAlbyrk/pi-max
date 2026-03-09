@@ -83,6 +83,17 @@ export class AgentManager {
   /** Prompt registry instance for rendering awareness template */
   private promptRegistry: PromptRegistry | null = null;
 
+  // ─── Foreground Tracking ────────────────────────────────────────
+  /** Foreground agent IDs — onAgentTaskDone skips triggerTurn for these */
+  private foregroundAgents = new Set<string>();
+  /** Callbacks to resolve foreground tool executions when moving to bg */
+  private foregroundResolvers = new Map<string, () => void>();
+
+  // ─── Concurrency Pool ──────────────────────────────────────────
+  private static readonly MAX_CONCURRENT = 10;
+  private activeSlots = 0;
+  private slotQueue: Array<{ resolve: () => void }> = [];
+
 
 
   constructor(
@@ -182,6 +193,92 @@ export class AgentManager {
   setMainModel(model: any): void { this.mainModel = model; }
   setModelRegistry(registry: any): void { this.modelRegistry = registry; }
 
+  // ─── Concurrency Pool ──────────────────────────────────────────
+
+  /**
+   * Acquire a concurrency slot. Max 10 active agents.
+   * If the pool is full, waits in a FIFO queue until a slot opens.
+   * @param signal Optional AbortSignal to cancel waiting
+   * @returns A release function that frees the slot
+   */
+  async acquireSlot(signal?: AbortSignal): Promise<() => void> {
+    if (this.activeSlots < AgentManager.MAX_CONCURRENT) {
+      this.activeSlots++;
+      return () => this.releaseSlot();
+    }
+
+    // Pool full — wait in queue
+    return new Promise<() => void>((resolve, reject) => {
+      const entry = {
+        resolve: () => {
+          this.activeSlots++;
+          resolve(() => this.releaseSlot());
+        },
+      };
+      this.slotQueue.push(entry);
+
+      // AbortSignal cancels the wait
+      if (signal) {
+        const onAbort = () => {
+          const idx = this.slotQueue.indexOf(entry);
+          if (idx !== -1) {
+            this.slotQueue.splice(idx, 1);
+            reject(new Error("Cancelled while waiting for agent slot"));
+          }
+        };
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      }
+    });
+  }
+
+  private releaseSlot(): void {
+    this.activeSlots--;
+    // Wake next queued waiter
+    if (this.slotQueue.length > 0) {
+      const next = this.slotQueue.shift()!;
+      next.resolve();
+    }
+  }
+
+  // ─── Foreground Management ─────────────────────────────────────
+
+  /**
+   * Move a foreground agent to background.
+   * The agent continues running, but completion will trigger a followUp
+   * notification instead of being handled by the tool call.
+   * Calls the registered resolver to unblock the spawn_agent tool execution.
+   */
+  moveToBg(agentId: string): void {
+    this.foregroundAgents.delete(agentId);
+    const resolver = this.foregroundResolvers.get(agentId);
+    if (resolver) {
+      this.foregroundResolvers.delete(agentId);
+      resolver();
+    }
+  }
+
+  /**
+   * Register a callback to resolve a foreground agent's tool execution
+   * when it gets moved to background (via Ctrl+Shift+B or other mechanism).
+   */
+  registerFgResolver(agentId: string, resolver: () => void): void {
+    this.foregroundResolvers.set(agentId, resolver);
+  }
+
+  /** Unregister a foreground resolver (called on normal completion) */
+  unregisterFgResolver(agentId: string): void {
+    this.foregroundResolvers.delete(agentId);
+  }
+
+  /** Check if an agent is tracked as foreground */
+  isForeground(agentId: string): boolean {
+    return this.foregroundAgents.has(agentId);
+  }
+
   /**
    * Generate a unique instance name for an agent type.
    * First agent of type "worker" → "worker-1", second → "worker-2", etc.
@@ -274,6 +371,10 @@ export class AgentManager {
     // Register in map and attach event listener BEFORE starting
     // to prevent race condition where early events are lost.
     this.agents.set(id, handle);
+    // Track foreground agents — onAgentTaskDone skips triggerTurn for these
+    if (options._isForeground) {
+      this.foregroundAgents.add(id);
+    }
     const handler: AgentEventHandler = (event: AgentEvent) => this.handleAgentEvent(handle, event);
     handle.on("*", handler);
     this.agentEventHandlers.set(id, { handle, handler });
@@ -357,6 +458,11 @@ export class AgentManager {
     this.agentTaskIds.clear();
     this.completionNotified.clear();
     this.agentTypeCounters.clear();
+    this.foregroundAgents.clear();
+    this.foregroundResolvers.clear();
+    // Reset concurrency pool
+    this.activeSlots = 0;
+    this.slotQueue = [];
 
     // 4. Now kill processes (best-effort, errors ignored)
     const promises: Promise<void>[] = [];
@@ -678,7 +784,17 @@ export class AgentManager {
     this.agents.delete(handle.id);
     this.completedAgents.set(handle.id, handle);
 
-    // Result goes to both LLM context and TUI display.
+    // FOREGROUND agents: spawn_agent tool handles the result delivery via
+    // tool result — no triggerTurn needed. The tool's promise resolves on
+    // the agent:completed event and returns the output directly.
+    if (this.foregroundAgents.has(handle.id)) {
+      this.foregroundAgents.delete(handle.id);
+      this.scheduleRemoval(handle.id, 2_000);
+      this.managerEvents.emit("agent:completed", handle);
+      return;
+    }
+
+    // BACKGROUND agents: send result as followUp to trigger a new turn.
     this.pi.sendMessage(
       {
         customType: "subagent-result",
@@ -705,7 +821,15 @@ export class AgentManager {
     this.agents.delete(handle.id);
     this.completedAgents.set(handle.id, handle);
 
-    // Error goes to LLM context only (display: false).
+    // FOREGROUND agents: the tool call handles the error via isError tool result.
+    if (this.foregroundAgents.has(handle.id)) {
+      this.foregroundAgents.delete(handle.id);
+      this.scheduleRemoval(handle.id);
+      this.managerEvents.emit("agent:failed", handle);
+      return;
+    }
+
+    // BACKGROUND agents: error goes to LLM context (display: false).
     this.pi.sendMessage(
       {
         customType: "subagent-error",
@@ -730,7 +854,15 @@ export class AgentManager {
     this.agents.delete(handle.id);
     this.completedAgents.set(handle.id, handle);
 
-    // Abort goes to LLM context only (display: false).
+    // FOREGROUND agents: the tool call handles abort via resolved promise.
+    if (this.foregroundAgents.has(handle.id)) {
+      this.foregroundAgents.delete(handle.id);
+      this.scheduleRemoval(handle.id);
+      this.managerEvents.emit("agent:aborted", handle);
+      return;
+    }
+
+    // BACKGROUND agents: abort goes to LLM context (display: false).
     this.pi.sendMessage(
       {
         customType: "subagent-error",

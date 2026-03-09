@@ -15,6 +15,7 @@ import { HookEngine } from "./core/hook-engine.js";
 import { registerBuiltinActions } from "./hooks/builtin-actions.js";
 import { setupTUI } from "./tui/setup.js";
 import { getStatusIcon } from "./tui/colors.js";
+import type { AgentEvent, AgentHandle, AgentToolStartEvent, AgentMessageDeltaEvent } from "./core/types.js";
 
 export default function (pi: ExtensionAPI) {
   // ─── 1. Registry — agent discovery ──────────────────────────────
@@ -44,24 +45,33 @@ export default function (pi: ExtensionAPI) {
 
   // ─── 5. Register tools ─────────────────────────────────────────
 
-  // spawn_agent — Async agent spawning
+  // spawn_agent — Foreground (default) or background agent spawning
   pi.registerTool({
     name: "spawn_agent",
     label: "Spawn Agent",
+    sideEffects: false, // Enables parallel execution of multiple spawn_agent calls
     description: [
       "Spawn a subagent for delegated tasks.",
       "",
+      "Default is foreground (blocking): waits until agent completes, returns result inline.",
+      "Set background=true only when you need to continue working while the agent runs.",
+      "",
       "When to use:",
-      "• Any task requiring reading, searching, or analyzing code",
-      "• You don't know which files to look at",
-      "• Task needs more than 1 file read",
+      "\u2022 Any task requiring reading, searching, or analyzing code",
+      "\u2022 You don't know which files to look at",
+      "\u2022 Task needs more than 1 file read",
       "",
       "When NOT to use:",
-      "• Reading a single known file you're about to edit — use read directly",
+      "\u2022 Reading a single known file you're about to edit \u2014 use read directly",
       "",
       "Modes:",
-      "• Predefined: 'agent' + 'task' only. System loads config automatically.",
-      "• Runtime: 'name' + 'systemPrompt' + 'task' for custom agents.",
+      "\u2022 Predefined: 'agent' + 'task' only. System loads config automatically.",
+      "\u2022 Runtime: 'name' + 'systemPrompt' + 'task' for custom agents.",
+      "",
+      "Execution:",
+      "\u2022 Default: BLOCKS until agent completes. Result returned inline. No extra turn needed.",
+      "\u2022 background=true: Returns immediately. Result delivered as followUp (costs an extra turn).",
+      "\u2022 Multiple foreground agents in the same turn run in parallel automatically.",
     ].join("\n"),
     parameters: Type.Object({
       agent: Type.Optional(Type.String({
@@ -91,6 +101,11 @@ export default function (pi: ExtensionAPI) {
       taskIds: Type.Optional(Type.Array(Type.Number(), {
         description: "Task IDs to assign to this agent. Task details are injected into the agent's system prompt.",
       })),
+      background: Type.Optional(Type.Boolean({
+        description: "If true, runs agent in background and returns immediately (result delivered as followUp). " +
+                     "Default is false (foreground): blocks until agent completes, returns result inline. " +
+                     "Only use background when you have your own parallel work to do alongside the agent.",
+      })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -115,6 +130,11 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
+        const isForeground = !params.background; // default: foreground (background must be explicitly true)
+
+        // Acquire concurrency pool slot (may wait if pool is full)
+        const slotRelease = await manager.acquireSlot(_signal);
+
         // Update cwd from context
         const currentCwd = ctx.cwd || cwd;
 
@@ -128,7 +148,99 @@ export default function (pi: ExtensionAPI) {
           thinking: params.thinking as any,
           task: params.task,
           taskIds: params.taskIds,
+          _isForeground: isForeground,
         });
+
+        if (isForeground) {
+          // ── FOREGROUND: Block until agent completes ──────────────
+          const result = await new Promise<{ output: string; failed: boolean }>((resolve) => {
+            let settled = false;
+            const settle = (output: string, failed: boolean) => {
+              if (settled) return;
+              settled = true;
+              handle.off("*", onEvent);
+              manager.unregisterFgResolver(handle.id);
+              slotRelease();
+              resolve({ output, failed });
+            };
+
+            const onEvent = (event: AgentEvent) => {
+              // Progress updates via tool_execution_update callback
+              if (_onUpdate && (event.type === "tool:start" || event.type === "message:delta")) {
+                _onUpdate({
+                  content: [{ type: "text", text: formatProgressLine(handle, event) }],
+                  details: { agentId: handle.id, agentName: handle.name, status: handle.status },
+                });
+              }
+
+              if (event.type === "agent:completed") {
+                settle((event as any).output || handle.getLastOutput(), false);
+              } else if (event.type === "agent:failed") {
+                settle((event as any).error || "Agent failed", true);
+              } else if (event.type === "agent:aborted") {
+                settle("[Agent was aborted]", true);
+              }
+            };
+            handle.on("*", onEvent);
+
+            // Register fg→bg resolver: called by manager.moveToBg() (triggered by Ctrl+Shift+B)
+            manager.registerFgResolver(handle.id, () => {
+              if (settled) return;
+              handle.off("*", onEvent);
+              // Do NOT release slot — agent still running in background
+              settled = true;
+              resolve({ output: "[Agent moved to background \u2014 results will be delivered separately]", failed: false });
+            });
+
+            // Also handle abort signal (e.g., user aborts the entire agent run)
+            if (_signal) {
+              const onAbort = () => {
+                if (settled) return;
+                handle.off("*", onEvent);
+                manager.unregisterFgResolver(handle.id);
+                manager.moveToBg(handle.id);
+                settled = true;
+                resolve({ output: "[Agent moved to background \u2014 results will be delivered separately]", failed: false });
+              };
+              if (_signal.aborted) {
+                onAbort();
+              } else {
+                _signal.addEventListener("abort", onAbort, { once: true });
+              }
+            }
+          });
+
+          if (result.failed) {
+            return {
+              content: [{ type: "text", text: `Agent "${handle.name}" failed: ${result.output}` }],
+              details: {
+                agentId: handle.id,
+                agentName: handle.name,
+                mode: "foreground",
+                usage: handle.getUsage(),
+              },
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{ type: "text", text: result.output }],
+            details: {
+              agentId: handle.id,
+              agentName: handle.name,
+              mode: "foreground",
+              runtimeMode: handle.runtimeMode,
+              usage: handle.getUsage(),
+            },
+          };
+        }
+
+        // ── BACKGROUND: Return immediately ──────────────────────
+        slotRelease(); // Release slot tracking — bg agents manage their own lifecycle
+        // Note: The agent is still running and occupying resources, but the
+        // concurrency slot is released because bg agents are fire-and-forget
+        // from the tool's perspective. The pool tracks active agent count
+        // separately for resource limiting.
 
         const mode = params.agent ? 'predefined' : 'runtime';
         return {
@@ -143,6 +255,7 @@ export default function (pi: ExtensionAPI) {
             agentName: handle.name,
             runtimeMode: handle.runtimeMode,
             spawnMode: mode,
+            mode: "background",
             task: params.task,
           },
         };
@@ -158,9 +271,23 @@ export default function (pi: ExtensionAPI) {
       const expanded = options?.expanded ?? true;
       const agentName = args.agent || args.name || "runtime";
       const task = args.task || "...";
+      const isBg = args.background === true;
 
+      if (!isBg) {
+        // ── Foreground: compact single-line with spinner dot ──
+        // Designed to stack visually as a group when multiple agents run
+        const firstLine = task.split("\n")[0];
+        const taskPreview = firstLine.length > 70 ? firstLine.slice(0, 70) + "\u2026" : firstLine;
+        let text = theme.fg("accent", "\u25CB "); // ○ open circle (pending)
+        text += theme.fg("toolTitle", theme.bold(agentName));
+        text += theme.fg("dim", "  " + taskPreview);
+        return new Text(text, 0, 0);
+      }
+
+      // ── Background: full display ──
       let text = theme.fg("toolTitle", theme.bold("spawn_agent "));
       text += theme.fg("accent", agentName);
+      text += " " + theme.fg("muted", "(background)");
 
       if (expanded) {
         const taskLines = task.split("\n");
@@ -169,7 +296,7 @@ export default function (pi: ExtensionAPI) {
         }
       } else {
         const firstLine = task.split("\n")[0];
-        const preview = firstLine.length > 80 ? firstLine.slice(0, 80) + "…" : firstLine;
+        const preview = firstLine.length > 80 ? firstLine.slice(0, 80) + "\u2026" : firstLine;
         text += "\n  " + theme.fg("dim", preview);
         const totalLines = task.split("\n").length;
         if (totalLines > 1) {
@@ -184,18 +311,63 @@ export default function (pi: ExtensionAPI) {
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, { expanded }, theme) {
+    renderResult(result, { expanded, isPartial }, theme) {
       const details = result.details as any;
 
       if (result.isError) {
+        const agentName = details?.agentName || "agent";
         const errorText = result.content[0];
-        return new Text(
-          theme.fg("error", errorText?.type === "text" ? errorText.text : "Failed"),
-          0, 0
-        );
+        const errorMsg = errorText?.type === "text" ? errorText.text : "Failed";
+        // Compact error line matching the group style
+        let text = theme.fg("error", "\u2717 "); // ✗
+        text += theme.fg("toolTitle", theme.bold(agentName));
+        text += theme.fg("error", "  " + errorMsg.split("\n")[0].slice(0, 70));
+        return new Text(text, 0, 0);
       }
 
-      let text = theme.fg("success", "✓ spawned ") +
+      const mode = details?.mode || "foreground";
+
+      if (mode === "foreground") {
+        const agentName = details?.agentName || "agent";
+        const usage = details?.usage;
+
+        if (!expanded) {
+          // ── Collapsed: compact completed line ──
+          let text = theme.fg("success", "\u2713 "); // ✓
+          text += theme.fg("toolTitle", theme.bold(agentName));
+          if (usage?.turns) {
+            text += theme.fg("dim", `  ${usage.turns}t`);
+            if (usage.cost > 0) text += theme.fg("dim", ` $${usage.cost.toFixed(3)}`);
+          }
+          // Show a brief output preview
+          const output = result.content[0];
+          if (output?.type === "text" && output.text) {
+            const preview = output.text.split("\n").find((l: string) => l.trim()) || "";
+            const short = preview.length > 50 ? preview.slice(0, 50) + "\u2026" : preview;
+            if (short) text += theme.fg("dim", "  " + short);
+          }
+          return new Text(text, 0, 0);
+        }
+
+        // ── Expanded: show full output ──
+        let text = theme.fg("success", "\u2713 "); // ✓
+        text += theme.fg("toolTitle", theme.bold(agentName));
+        if (usage?.turns) {
+          text += theme.fg("dim", `  ${usage.turns}t`);
+          if (usage.cost > 0) text += theme.fg("dim", ` $${usage.cost.toFixed(3)}`);
+        }
+        const output = result.content[0];
+        if (output?.type === "text" && output.text) {
+          const outputLines = output.text.split("\n");
+          for (const line of outputLines) {
+            text += "\n" + theme.fg("dim", line);
+          }
+        }
+        return new Text(text, 0, 0);
+      }
+
+      // ── Background: spawned status ──
+      let text = theme.fg("success", "\u2713 spawned ") +
         theme.fg("dim", `(${details?.runtimeMode || "unknown"})`);
 
       if (expanded && details?.agentId) {
@@ -428,4 +600,49 @@ export default function (pi: ExtensionAPI) {
   pi.on("model_select", async (event: any) => {
     if (event.model) manager.setMainModel(event.model);
   });
+}
+
+// ─── Helpers ────────────────────────────────────────────────────
+
+/**
+ * Format a 1-line progress string for foreground agent tool_execution_update.
+ */
+function formatProgressLine(handle: AgentHandle, event: AgentEvent): string {
+  const elapsed = formatDuration(Date.now() - handle.startedAt);
+
+  if (event.type === "tool:start") {
+    const e = event as AgentToolStartEvent;
+    const argSummary = summarizeToolArgs(e.args);
+    return `${handle.name}: ${e.toolName}${argSummary ? " " + argSummary : ""} [${elapsed}]`;
+  }
+
+  if (event.type === "message:delta") {
+    const e = event as AgentMessageDeltaEvent;
+    const preview = e.text.slice(0, 60).replace(/\n/g, " ").trim();
+    if (preview) {
+      return `${handle.name}: writing... "${preview}" [${elapsed}]`;
+    }
+  }
+
+  return `${handle.name}: ${handle.status} [${elapsed}]`;
+}
+
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${minutes}m ${secs.toString().padStart(2, "0")}s`;
+}
+
+function summarizeToolArgs(args: Record<string, unknown>): string {
+  if (!args) return "";
+  // Show first string arg value as a short preview
+  for (const value of Object.values(args)) {
+    if (typeof value === "string" && value.length > 0) {
+      const preview = value.split("\n")[0];
+      return preview.length > 50 ? preview.slice(0, 50) + "\u2026" : preview;
+    }
+  }
+  return "";
 }

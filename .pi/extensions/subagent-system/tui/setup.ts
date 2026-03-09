@@ -235,6 +235,29 @@ export function setupTUI(pi: ExtensionAPI, manager: AgentManager): void {
     },
   });
 
+  // ─── fg→bg transition (Alt+Shift+B) ─────────────────────────────
+
+  pi.registerShortcut("alt+shift+b", {
+    description: "Move all foreground agents to background",
+    handler: async (ctx) => {
+      currentCtx = ctx;
+      const running = manager.getRunningAgents();
+      let moved = 0;
+      for (const agent of running) {
+        if (manager.isForeground(agent.id)) {
+          manager.moveToBg(agent.id);
+          moved++;
+        }
+      }
+      if (moved > 0) {
+        ctx.ui.notify(`Moved ${moved} agent${moved > 1 ? "s" : ""} to background`, "info");
+      } else {
+        ctx.ui.notify("No foreground agents to move", "info");
+      }
+      invalidateAndRender();
+    },
+  });
+
   // ─── Cleanup on session end ─────────────────────────────────────
 
   pi.on("session_shutdown", async () => {

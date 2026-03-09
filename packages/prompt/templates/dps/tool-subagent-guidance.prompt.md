@@ -23,7 +23,11 @@ When spawning subagents for parallel or delegated work:
 - Specify only the tools the subagent needs (don't grant unnecessary permissions)
 - Use a coordinator pattern: spawn multiple workers, collect results, synthesize
 
-**Agent results are delivered automatically.** When an agent completes, you receive its output as a notification — there is no need to call active_agents to check progress. If you have other work to do, continue with it. If not, inform the user and end your turn.
+**Foreground vs Background:**
+- Default is **foreground** (blocking): spawn_agent waits until the agent completes and returns the result inline as a tool result. Multiple foreground agents in the same turn run in parallel automatically.
+- Use foreground (default) when you need the result before continuing (research, analysis, file reading, code exploration).
+- Use `background: true` for **background** when you have your own work to do in parallel (e.g., editing files while an agent monitors or analyzes). Background results arrive as a followUp notification.
+- Max 10 agents can run concurrently; additional agents queue until a slot opens.
 
 **Subagent output:**
 - Subagents write to the coordinator, not directly to the user
