@@ -11,6 +11,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { CompactionEntry, ReadonlySessionManager } from "../../session-manager.js";
 import { _syncToolStore, setOnStoreChanged } from "../../tools/task.js";
+import type { DpsFeature } from "../dps/index.js";
 import { appendAutoNote } from "./automation/auto-notes.js";
 import { findBestTaskForFiles, findTaskByFileContext } from "./automation/file-correlator.js";
 import { detectTestResult } from "./automation/test-detector.js";
@@ -206,7 +207,7 @@ class TaskContextImpl implements TaskContext {
  *
  * Called from AgentSession constructor after other feature setups.
  */
-export function setupTaskFeature(session: TaskFeatureSession): void {
+export function setupTaskFeature(session: TaskFeatureSession, dpsFeature?: DpsFeature): void {
 	// ── Create shared context ────────────────────────────────────────────────
 
 	const emitter: EventEmitter = {
@@ -282,31 +283,27 @@ export function setupTaskFeature(session: TaskFeatureSession): void {
 		}
 	});
 
-	// ── Agent start — context injection ─────────────────────────────────────
+	// ── DPS variable provider — task context ────────────────────────────────
 
-	// before_agent_start: inject task context into LLM context
-	session.onBeforeAgentStart(async (_ctx) => {
-		try {
-			const info = session.getContextInfo();
-			const budgetLevel = determineBudgetLevel(info.contextWindow, info.estimatedTokens);
-			const taskContextText = buildTaskContext(ctx.store, budgetLevel);
-			if (!taskContextText) return undefined;
-
-			return {
-				messages: [
-					{
-						customType: "task-context",
-						content: taskContextText,
-						display: false,
-						excludeFromContext: false,
-					},
-				],
-			};
-		} catch (err) {
-			console.error("[task] before_agent_start context injection failed:", err);
-			return undefined;
-		}
-	});
+	// Register a variable provider that supplies TASK_CONTEXT so that
+	// file-based DPS templates can reference it via {{TASK_CONTEXT}}.
+	// This replaces the former __task-context programmatic segment; the
+	// content is now injected through the template variable pipeline instead
+	// of as a standalone programmatic segment in the composition layer stack.
+	if (dpsFeature) {
+		dpsFeature.registerVariableProvider({
+			provide(_context) {
+				try {
+					const info = session.getContextInfo();
+					const budgetLevel = determineBudgetLevel(info.contextWindow, info.estimatedTokens);
+					return { TASK_CONTEXT: buildTaskContext(ctx.store, budgetLevel) ?? "" };
+				} catch (err) {
+					console.error("[task] variable provider failed:", err);
+					return { TASK_CONTEXT: "" };
+				}
+			},
+		});
+	}
 
 	// ── Compaction safety ────────────────────────────────────────────────────
 

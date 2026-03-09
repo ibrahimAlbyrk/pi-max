@@ -16,10 +16,10 @@ export interface ToolMetadata {
  * Get the short description for a tool.
  * Falls back to first sentence of tool's own description if no prompt template exists.
  */
-function getToolShortDescription(tool: ToolMetadata): string {
-	const registry = getPromptRegistry();
+function getToolShortDescription(tool: ToolMetadata, cwd?: string): string {
+	const registry = getPromptRegistry(cwd);
 	try {
-		return registry.render(`tools/${tool.name}-short`);
+		return registry.render(`tools/${tool.name}-short`).trim();
 	} catch {
 		// No prompt template for this tool — use tool's own description (first line)
 		const firstLine = tool.description.split("\n")[0].trim();
@@ -108,7 +108,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	// Build tools list from active tools
 	const tools = activeTools ?? [];
 	const toolsList =
-		tools.length > 0 ? tools.map((t) => `- ${t.name}: ${getToolShortDescription(t)}`).join("\n") : "(none)";
+		tools.length > 0
+			? tools.map((t) => `- ${t.name}: ${getToolShortDescription(t, resolvedCwd)}`).join("\n")
+			: "(none)";
 
 	// Build context sections
 	let contextFilesSection = "";
@@ -124,7 +126,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		skillsSection = formatSkillsForPrompt(skills);
 	}
 
-	const registry = getPromptRegistry();
+	const registry = getPromptRegistry(resolvedCwd);
 	return registry.render("system/coding-agent", {
 		TOOLS_LIST: toolsList,
 		README_PATH: readmePath,

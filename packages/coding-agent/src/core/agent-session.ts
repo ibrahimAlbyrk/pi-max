@@ -69,6 +69,8 @@ import {
 } from "./extensions/index.js";
 import { registerBgCommands } from "./features/bg/commands.js";
 import { setupBgFeature } from "./features/bg/index.js";
+import { registerDpsCommands } from "./features/dps/commands.js";
+import { setupDpsFeature } from "./features/dps/index.js";
 import { registerLspCommands } from "./features/lsp/commands.js";
 import { setupLspFeature } from "./features/lsp/index.js";
 import type { RestrictionChecker } from "./features/restrictions/index.js";
@@ -294,6 +296,8 @@ export class AgentSession {
 	private _builtinBeforeAgentStartHandlers: Array<
 		(ctx: { cwd: string }) => Promise<
 			| {
+					/** Override the base system prompt for this turn (e.g., DPS-composed prompt). */
+					systemPrompt?: string;
 					messages?: Array<{
 						customType: string;
 						content: string | (ImageContent | TextContent)[];
@@ -359,7 +363,8 @@ export class AgentSession {
 
 		setupBgFeature(this);
 		setupLspFeature(this);
-		setupTaskFeature(this);
+		const dpsFeature = setupDpsFeature(this);
+		setupTaskFeature(this, dpsFeature);
 		setupRestrictionsFeature(this);
 	}
 
@@ -732,12 +737,16 @@ export class AgentSession {
 
 	/**
 	 * Register a handler called before the agent starts processing each prompt.
-	 * Handlers may return custom messages to inject into the conversation context
-	 * (e.g., task state injected as a system-prompt-level aside).
+	 * Handlers may return:
+	 * - `systemPrompt`: override the base system prompt for this turn (e.g., DPS-composed prompt).
+	 *   The last handler to return a systemPrompt wins. Extensions receive this as their base.
+	 * - `messages`: custom messages to inject into the conversation context
+	 *   (e.g., task state injected as a system-prompt-level aside).
 	 */
 	onBeforeAgentStart(
 		handler: (ctx: { cwd: string }) => Promise<
 			| {
+					systemPrompt?: string;
 					messages?: Array<{
 						customType: string;
 						content: string | (ImageContent | TextContent)[];
@@ -1179,12 +1188,40 @@ export class AgentSession {
 		}
 		this._pendingNextTurnMessages = [];
 
-		// Emit before_agent_start extension event
+		// Run builtin before_agent_start handlers first.
+		// Built-in features (e.g., DPS) may return a systemPrompt to compose the base prompt
+		// dynamically. Their result is used as the effective base for the extension runner,
+		// allowing extensions to see and optionally modify the DPS-composed prompt.
+		let builtinSystemPrompt: string | undefined;
+		for (const handler of this._builtinBeforeAgentStartHandlers) {
+			const result = await handler({ cwd: this._cwd });
+			if (result?.systemPrompt) {
+				builtinSystemPrompt = result.systemPrompt;
+			}
+			if (result?.messages) {
+				for (const msg of result.messages) {
+					messages.push({
+						role: "custom",
+						customType: msg.customType,
+						content: msg.content,
+						display: msg.display,
+						details: msg.details,
+						timestamp: Date.now(),
+						...(msg.excludeFromContext ? { excludeFromContext: msg.excludeFromContext } : {}),
+					});
+				}
+			}
+		}
+
+		// Effective base prompt: built-in feature composed (DPS) or static fallback
+		const effectiveBasePrompt = builtinSystemPrompt ?? this._baseSystemPrompt;
+
+		// Emit before_agent_start extension event (receives effective base prompt as context)
 		if (this._extensionRunner) {
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
-				this._baseSystemPrompt,
+				effectiveBasePrompt,
 			);
 			// Add all custom messages from extensions
 			if (result?.messages) {
@@ -1200,31 +1237,15 @@ export class AgentSession {
 					});
 				}
 			}
-			// Apply extension-modified system prompt, or reset to base
+			// Apply extension-modified system prompt, or use the effective base
 			if (result?.systemPrompt) {
 				this.agent.setSystemPrompt(result.systemPrompt);
 			} else {
-				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this.agent.setSystemPrompt(this._baseSystemPrompt);
+				this.agent.setSystemPrompt(effectiveBasePrompt);
 			}
-		}
-
-		// Call builtin before_agent_start handlers and collect any context messages they return
-		for (const handler of this._builtinBeforeAgentStartHandlers) {
-			const result = await handler({ cwd: this._cwd });
-			if (result?.messages) {
-				for (const msg of result.messages) {
-					messages.push({
-						role: "custom",
-						customType: msg.customType,
-						content: msg.content,
-						display: msg.display,
-						details: msg.details,
-						timestamp: Date.now(),
-						...(msg.excludeFromContext ? { excludeFromContext: msg.excludeFromContext } : {}),
-					});
-				}
-			}
+		} else {
+			// No extension runner — apply effective prompt directly
+			this.agent.setSystemPrompt(effectiveBasePrompt);
 		}
 
 		await this.agent.prompt(messages);
@@ -2503,6 +2524,8 @@ export class AgentSession {
 			this._extensionRunner.registerBuiltinExtension("<builtin-lsp>", registerLspCommands);
 			// Register built-in task commands, shortcuts, and widget.
 			this._extensionRunner.registerBuiltinExtension("<builtin-task>", registerTaskCommands);
+			// Register built-in /dps:log and /dps:reload debug commands.
+			this._extensionRunner.registerBuiltinExtension("<builtin-dps>", registerDpsCommands);
 
 			// Extension tools registered via pi.registerTool() are added next; all
 			// registrations (including duplicates across extensions) reach ToolRegistry,
