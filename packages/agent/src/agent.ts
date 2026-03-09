@@ -8,6 +8,7 @@ import {
 	type ImageContent,
 	type Message,
 	type Model,
+	type SystemPromptBlock,
 	streamSimple,
 	type TextContent,
 	type ThinkingBudgets,
@@ -205,7 +206,7 @@ export class Agent {
 	}
 
 	// State mutators
-	setSystemPrompt(v: string) {
+	setSystemPrompt(v: string | SystemPromptBlock[]) {
 		this._state.systemPrompt = v;
 	}
 
