@@ -65,6 +65,7 @@ import type {
 import { BgBadge } from "../../core/features/bg/badge.js";
 import { getProcessManager } from "../../core/features/bg/index.js";
 import { installLspPackage, isLspPackageAvailable } from "../../core/features/lsp/availability.js";
+import { applySelection, showHistorySearch } from "../../core/features/prompt-history-search.js";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
 import { type AppAction, KeybindingsManager } from "../../core/keybindings.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
@@ -2356,6 +2357,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("resume", () => this.showSessionSelector());
+		this.defaultEditor.onAction("historySearch", () => this.handleHistorySearch());
 
 		// Arrow up/down at editor boundary scrolls the chat region
 		this.defaultEditor.onBoundaryScroll = (direction: -1 | 1) => {
@@ -3358,6 +3360,41 @@ export class InteractiveMode {
 		} else {
 			this.showStatus(`Restored ${restored} queued message${restored > 1 ? "s" : ""} to editor`);
 		}
+	}
+
+	private handleHistorySearch(): void {
+		const ctx: ExtensionContext = {
+			ui: this.createExtensionUIContext(),
+			hasUI: true,
+			cwd: process.cwd(),
+			sessionManager: this.sessionManager,
+			modelRegistry: this.session.modelRegistry,
+			model: this.session.model,
+			isIdle: () => !this.session.isStreaming,
+			abort: () => this.session.abort(),
+			hasPendingMessages: () => this.session.pendingMessageCount > 0,
+			shutdown: () => {
+				this.shutdownRequested = true;
+			},
+			getContextUsage: () => this.session.getContextUsage(),
+			compact: (options) => {
+				void (async () => {
+					try {
+						const result = await this.executeCompaction(options?.customInstructions, false);
+						if (result) {
+							options?.onComplete?.(result);
+						}
+					} catch (error) {
+						const err = error instanceof Error ? error : new Error(String(error));
+						options?.onError?.(err);
+					}
+				})();
+			},
+			getSystemPrompt: () => this.session.systemPrompt,
+		};
+		void showHistorySearch(ctx).then((selected) => {
+			if (selected) applySelection(ctx, selected);
+		});
 	}
 
 	private updateEditorBorderColor(): void {
