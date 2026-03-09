@@ -8,6 +8,7 @@
  * `dps:` block in their YAML frontmatter.
  */
 
+import type { SystemPromptBlock } from "@mariozechner/pi-ai";
 import type { Skill } from "../../skills.js";
 
 // ─── Layer ───────────────────────────────────────────────────────
@@ -76,6 +77,12 @@ export interface DpsEntry {
 	layer: Layer;
 	/** Sort priority within layer (lower = first) */
 	priority: number;
+	/**
+	 * Whether this entry contains per-turn dynamic content (e.g., DATE_TIME, TASK_CONTEXT).
+	 * Dynamic entries are placed in a separate cache block so that stable entries
+	 * before them remain cached across turns.
+	 */
+	dynamic: boolean;
 	/** Parsed conditions from dps.conditions */
 	conditions: Condition[];
 	/** Compiled condition evaluator */
@@ -162,6 +169,8 @@ export interface ResolvedEntry {
 	content: string;
 	/** Whether this entry came from a programmatic segment (vs. a template) */
 	programmatic: boolean;
+	/** Whether this entry contains per-turn dynamic content */
+	dynamic: boolean;
 }
 
 // ─── Runtime State ───────────────────────────────────────────────
@@ -232,6 +241,12 @@ export interface DPSConfig {
 export interface ComposeResult {
 	/** Final composed system prompt text (L0-L3 joined with \n\n) */
 	text: string;
+	/**
+	 * Cache-aware system prompt blocks. Stable (non-dynamic) entries form the first block,
+	 * dynamic entries form the second block. Providers that support per-block caching
+	 * (Anthropic, Bedrock) can cache the stable prefix independently.
+	 */
+	blocks: SystemPromptBlock[];
 	/** DJB2 fingerprint of the composed content for change detection */
 	fingerprint: string;
 	/** Template names and segment IDs that were active in this composition */

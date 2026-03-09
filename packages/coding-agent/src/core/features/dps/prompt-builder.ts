@@ -365,6 +365,7 @@ export function composeDpsPrompt(options: ComposeDpsPromptOptions): ComposeResul
 				priority: entry.priority,
 				content,
 				programmatic: false,
+				dynamic: entry.dynamic,
 			});
 		} catch (err) {
 			console.warn(`DPS: Failed to render "${entry.templateName}": ${err}`);
@@ -382,6 +383,7 @@ export function composeDpsPrompt(options: ComposeDpsPromptOptions): ComposeResul
 				priority: seg.priority,
 				content,
 				programmatic: true,
+				dynamic: false,
 			});
 		}
 	}

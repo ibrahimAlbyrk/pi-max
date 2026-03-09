@@ -54,6 +54,7 @@ export function scanDpsTemplates(registry: PromptRegistry): DpsEntry[] {
 			templateName: name,
 			layer: layer as Layer,
 			priority: typeof dpsBlock.priority === "number" ? dpsBlock.priority : 50,
+			dynamic: dpsBlock.dynamic === true,
 			conditions,
 			evaluator,
 			dependsOn: Array.isArray(dpsBlock.depends_on) ? (dpsBlock.depends_on as string[]) : [],

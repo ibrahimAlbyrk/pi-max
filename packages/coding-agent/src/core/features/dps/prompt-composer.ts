@@ -6,6 +6,7 @@
  * into the final system prompt text.
  */
 
+import type { SystemPromptBlock } from "@mariozechner/pi-ai";
 import type { ComposeResult, ResolvedEntry } from "./types.js";
 
 // ─── DJB2 Hash ───────────────────────────────────────────────────
@@ -89,13 +90,27 @@ export class PromptComposer {
 		// 6. Store resolved entries (for debug inspection via getLastResolvedEntries)
 		this.lastResolvedEntries = budgeted;
 
-		// 7. Join entries with \n\n
-		const text = budgeted.map((e) => e.content).join("\n\n");
+		// 7. Split into stable and volatile groups for cache-aware blocks.
+		//    Stable entries (non-dynamic) form the first block — cached across turns.
+		//    Volatile entries (dynamic) form the second block — may change each turn.
+		const stable = budgeted.filter((e) => !e.dynamic);
+		const volatile = budgeted.filter((e) => e.dynamic);
 
-		// 8. Collect active IDs
+		const blocks: SystemPromptBlock[] = [];
+		if (stable.length > 0) {
+			blocks.push({ text: stable.map((e) => e.content).join("\n\n"), cache: true });
+		}
+		if (volatile.length > 0) {
+			blocks.push({ text: volatile.map((e) => e.content).join("\n\n"), cache: true });
+		}
+
+		// 8. Backward-compatible flat text (all blocks joined)
+		const text = blocks.map((b) => b.text).join("\n\n");
+
+		// 9. Collect active IDs
 		const activeIds = budgeted.map((e) => e.id);
 
-		const result: ComposeResult = { text, fingerprint, activeIds };
+		const result: ComposeResult = { text, blocks, fingerprint, activeIds };
 
 		// Update cache
 		this.lastFingerprint = fingerprint;

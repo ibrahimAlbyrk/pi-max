@@ -33,6 +33,7 @@ import {
 	type ImageContent,
 	type Message,
 	type Model,
+	normalizeSystemPrompt,
 	type OAuthCredentials,
 	type OAuthLoginCallbacks,
 	type SimpleStreamOptions,
@@ -397,30 +398,25 @@ function streamCustomAnthropic(
 				stream: true,
 			};
 
-			// System prompt with Claude Code identity for OAuth
-			if (isOAuth) {
-				params.system = [
-					{
+			// System prompt with per-block cache control
+			const systemBlocks = normalizeSystemPrompt(context.systemPrompt);
+			if (isOAuth || systemBlocks.length > 0) {
+				const system: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> = [];
+				if (isOAuth) {
+					system.push({
 						type: "text",
 						text: "You are Claude Code, Anthropic's official CLI for Claude.",
 						cache_control: { type: "ephemeral" },
-					},
-				];
-				if (context.systemPrompt) {
-					params.system.push({
-						type: "text",
-						text: sanitizeSurrogates(context.systemPrompt),
-						cache_control: { type: "ephemeral" },
 					});
 				}
-			} else if (context.systemPrompt) {
-				params.system = [
-					{
+				for (const block of systemBlocks) {
+					system.push({
 						type: "text",
-						text: sanitizeSurrogates(context.systemPrompt),
-						cache_control: { type: "ephemeral" },
-					},
-				];
+						text: sanitizeSurrogates(block.text),
+						...(block.cache !== false ? { cache_control: { type: "ephemeral" } } : {}),
+					});
+				}
+				params.system = system;
 			}
 
 			if (context.tools) {

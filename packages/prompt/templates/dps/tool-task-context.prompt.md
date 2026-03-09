@@ -5,6 +5,7 @@ version: 1
 dps:
   layer: 2
   priority: 1
+  dynamic: true
   conditions:
     - tool_active: task
 variables:

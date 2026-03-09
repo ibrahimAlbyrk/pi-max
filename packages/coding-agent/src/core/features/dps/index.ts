@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
+import type { ImageContent, Model, SystemPromptBlock, TextContent } from "@mariozechner/pi-ai";
 import { parse } from "yaml";
 import { getPromptRegistry, invalidatePromptRegistry } from "../../prompt-registry.js";
 import type { ResourceLoader } from "../../resource-loader.js";
@@ -67,7 +67,7 @@ export interface DpsFeatureSession {
 	onBeforeAgentStart(
 		handler: (ctx: { cwd: string }) => Promise<
 			| {
-					systemPrompt?: string;
+					systemPrompt?: string | SystemPromptBlock[];
 					messages?: Array<{
 						customType: string;
 						content: string | (ImageContent | TextContent)[];
@@ -397,7 +397,7 @@ export function setupDpsFeature(session: DpsFeatureSession): DpsFeature {
 		}));
 
 		return {
-			systemPrompt: composeResult.text || undefined,
+			systemPrompt: composeResult.blocks.length > 0 ? composeResult.blocks : undefined,
 			messages: messages.length > 0 ? messages : undefined,
 		};
 	});

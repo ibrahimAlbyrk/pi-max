@@ -5,6 +5,7 @@ version: 1
 dps:
   layer: 3
   priority: 99
+  dynamic: true
 variables:
   - name: DATE_TIME
     type: string
