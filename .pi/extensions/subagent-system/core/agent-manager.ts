@@ -338,6 +338,7 @@ export class AgentManager {
         this.agentMessagingConfigs.set(id, definition.messaging);
       }
     } else {
+      // name should be provided by spawn_agent tool; fallback just in case
       if (!options.name) options.name = `runtime-${idCounter}`;
       const color = assignColor();
       agentColorHex = color.fg;

@@ -53,8 +53,7 @@ export default function (pi: ExtensionAPI) {
     description: [
       "Spawn a subagent for delegated tasks.",
       "",
-      "Default is foreground (blocking): waits until agent completes, returns result inline.",
-      "Set background=true only when you need to continue working while the agent runs.",
+      "BLOCKS until agent completes and returns result inline. Multiple agents in the same turn run in parallel automatically. Do NOT set background=true unless explicitly asked by user.",
       "",
       "When to use:",
       "\u2022 Any task requiring reading, searching, or analyzing code",
@@ -66,19 +65,14 @@ export default function (pi: ExtensionAPI) {
       "",
       "Modes:",
       "\u2022 Predefined: 'agent' + 'task' only. System loads config automatically.",
-      "\u2022 Runtime: 'name' + 'systemPrompt' + 'task' for custom agents.",
-      "",
-      "Execution:",
-      "\u2022 Default: BLOCKS until agent completes. Result returned inline. No extra turn needed.",
-      "\u2022 background=true: Returns immediately. Result delivered as followUp (costs an extra turn).",
-      "\u2022 Multiple foreground agents in the same turn run in parallel automatically.",
+      "\u2022 Runtime: 'name' (REQUIRED) + 'systemPrompt' (REQUIRED) + 'task' for custom agents.",
     ].join("\n"),
     parameters: Type.Object({
       agent: Type.Optional(Type.String({
         description: "Predefined agent name (e.g., 'explorer', 'worker'). Config loads automatically.",
       })),
       name: Type.Optional(Type.String({
-        description: "Runtime mode only: custom agent name. Ignored if 'agent' is set.",
+        description: "REQUIRED for runtime mode: unique identifier for this agent instance (e.g., 'analyzer-1', 'writer'). Ignored if 'agent' is set. Must be provided when spawning runtime agents.",
       })),
       description: Type.Optional(Type.String({
         description: "Runtime mode only: agent purpose. Ignored if 'agent' is set.",
@@ -102,9 +96,7 @@ export default function (pi: ExtensionAPI) {
         description: "Task IDs to assign to this agent. Task details are injected into the agent's system prompt.",
       })),
       background: Type.Optional(Type.Boolean({
-        description: "If true, runs agent in background and returns immediately (result delivered as followUp). " +
-                     "Default is false (foreground): blocks until agent completes, returns result inline. " +
-                     "Only use background when you have your own parallel work to do alongside the agent.",
+        description: "If true, returns immediately without waiting. Default false.",
       })),
     }),
 
@@ -121,9 +113,9 @@ export default function (pi: ExtensionAPI) {
             console.warn(`[spawn_agent] Predefined agent "${params.agent}" ignores: ${ignoredParams.join(', ')}`);
           }
         } else {
-          // Runtime mode - require essential parameters
+          // Runtime mode - require name and systemPrompt
           if (!params.name) {
-            throw new Error('Runtime mode requires "name" parameter');
+            throw new Error('Runtime mode requires "name" parameter. Provide a unique identifier (e.g., "analyzer-1", "writer").');
           }
           if (!params.systemPrompt) {
             throw new Error('Runtime mode requires "systemPrompt" parameter');
@@ -153,6 +145,15 @@ export default function (pi: ExtensionAPI) {
 
         if (isForeground) {
           // ── FOREGROUND: Block until agent completes ──────────────
+
+          // Emit initial progress so renderResult (which handles ALL display) shows immediately
+          const taskFirstLine = params.task.split("\n")[0];
+          const taskPreview = taskFirstLine.length > 60 ? taskFirstLine.slice(0, 60) + "\u2026" : taskFirstLine;
+          _onUpdate?.({
+            content: [{ type: "text", text: `${handle.name}: ${taskPreview}` }],
+            details: { agentId: handle.id, agentName: handle.name, status: "starting", mode: "foreground" },
+          });
+
           const result = await new Promise<{ output: string; failed: boolean }>((resolve) => {
             let settled = false;
             const settle = (output: string, failed: boolean) => {
@@ -169,7 +170,7 @@ export default function (pi: ExtensionAPI) {
               if (_onUpdate && (event.type === "tool:start" || event.type === "message:delta")) {
                 _onUpdate({
                   content: [{ type: "text", text: formatProgressLine(handle, event) }],
-                  details: { agentId: handle.id, agentName: handle.name, status: handle.status },
+                  details: { agentId: handle.id, agentName: handle.name, status: handle.status, mode: "foreground" },
                 });
               }
 
@@ -267,41 +268,31 @@ export default function (pi: ExtensionAPI) {
       }
     },
 
-    renderCall(args, options, theme) {
-      const expanded = options?.expanded ?? true;
-      const agentName = args.agent || args.name || "runtime";
-      const task = args.task || "...";
+    renderCall(args, _options, theme) {
       const isBg = args.background === true;
 
       if (!isBg) {
-        // ── Foreground: compact single-line with spinner dot ──
-        // Designed to stack visually as a group when multiple agents run
-        const firstLine = task.split("\n")[0];
-        const taskPreview = firstLine.length > 70 ? firstLine.slice(0, 70) + "\u2026" : firstLine;
-        let text = theme.fg("accent", "\u25CB "); // ○ open circle (pending)
-        text += theme.fg("toolTitle", theme.bold(agentName));
-        text += theme.fg("dim", "  " + taskPreview);
-        return new Text(text, 0, 0);
+        // Foreground: hide renderCall entirely — renderResult handles all display.
+        // This prevents "explorer" (type) in call + "explorer-1" (instance) in result = looks like 2 agents.
+        return undefined;
       }
 
-      // ── Background: full display ──
+      // Background: standard tool call display
+      const expanded = _options?.expanded ?? true;
+      const agentName = args.agent || args.name || "runtime";
+      const task = args.task || "...";
+
       let text = theme.fg("toolTitle", theme.bold("spawn_agent "));
       text += theme.fg("accent", agentName);
-      text += " " + theme.fg("muted", "(background)");
 
       if (expanded) {
-        const taskLines = task.split("\n");
-        for (const line of taskLines) {
+        for (const line of task.split("\n")) {
           text += "\n  " + theme.fg("dim", line);
         }
       } else {
         const firstLine = task.split("\n")[0];
         const preview = firstLine.length > 80 ? firstLine.slice(0, 80) + "\u2026" : firstLine;
         text += "\n  " + theme.fg("dim", preview);
-        const totalLines = task.split("\n").length;
-        if (totalLines > 1) {
-          text += theme.fg("muted", ` (${totalLines} lines)`);
-        }
       }
 
       if (args.model) {
@@ -313,65 +304,65 @@ export default function (pi: ExtensionAPI) {
 
     renderResult(result, { expanded, isPartial }, theme) {
       const details = result.details as any;
+      const mode = details?.mode || "foreground";
 
-      if (result.isError) {
-        const agentName = details?.agentName || "agent";
-        const errorText = result.content[0];
-        const errorMsg = errorText?.type === "text" ? errorText.text : "Failed";
-        // Compact error line matching the group style
-        let text = theme.fg("error", "\u2717 "); // ✗
-        text += theme.fg("toolTitle", theme.bold(agentName));
-        text += theme.fg("error", "  " + errorMsg.split("\n")[0].slice(0, 70));
+      // ── Background: spawned status ──
+      if (mode === "background") {
+        let text = theme.fg("success", "\u2713 spawned ") +
+          theme.fg("dim", `(${details?.runtimeMode || "unknown"})`);
+        if (expanded && details?.agentId) {
+          text += "\n  " + theme.fg("dim", `Agent: ${details.agentId}`);
+        }
         return new Text(text, 0, 0);
       }
 
-      const mode = details?.mode || "foreground";
+      // ── Foreground: single display (renderCall returns undefined) ──
+      const agentName = details?.agentName || "agent";
 
-      if (mode === "foreground") {
-        const agentName = details?.agentName || "agent";
-        const usage = details?.usage;
+      // Error
+      if (result.isError) {
+        const errorText = result.content[0];
+        const msg = errorText?.type === "text" ? errorText.text : "Failed";
+        return new Text(
+          theme.fg("error", "\u2717 ") + theme.fg("toolTitle", theme.bold(agentName)) +
+          "  " + theme.fg("error", msg.split("\n")[0].slice(0, 70)),
+          0, 0,
+        );
+      }
 
-        if (!expanded) {
-          // ── Collapsed: compact completed line ──
-          let text = theme.fg("success", "\u2713 "); // ✓
-          text += theme.fg("toolTitle", theme.bold(agentName));
-          if (usage?.turns) {
-            text += theme.fg("dim", `  ${usage.turns}t`);
-            if (usage.cost > 0) text += theme.fg("dim", ` $${usage.cost.toFixed(3)}`);
-          }
-          // Show a brief output preview
-          const output = result.content[0];
-          if (output?.type === "text" && output.text) {
-            const preview = output.text.split("\n").find((l: string) => l.trim()) || "";
-            const short = preview.length > 50 ? preview.slice(0, 50) + "\u2026" : preview;
-            if (short) text += theme.fg("dim", "  " + short);
-          }
-          return new Text(text, 0, 0);
-        }
+      // Partial: progress while agent is running
+      if (isPartial) {
+        const progressText = result.content[0];
+        const line = progressText?.type === "text" ? progressText.text : "";
+        const stripped = line.startsWith(agentName + ":") ? line.slice(agentName.length + 1).trim() : line;
+        return new Text(
+          theme.fg("toolTitle", theme.bold(agentName)) + "  " + theme.fg("dim", stripped),
+          0, 0,
+        );
+      }
 
-        // ── Expanded: show full output ──
-        let text = theme.fg("success", "\u2713 "); // ✓
-        text += theme.fg("toolTitle", theme.bold(agentName));
-        if (usage?.turns) {
-          text += theme.fg("dim", `  ${usage.turns}t`);
-          if (usage.cost > 0) text += theme.fg("dim", ` $${usage.cost.toFixed(3)}`);
-        }
+      // Final: completed
+      const usage = details?.usage;
+      let text = theme.fg("success", "\u2713 ") + theme.fg("toolTitle", theme.bold(agentName));
+      if (usage?.turns) {
+        text += "  " + theme.fg("dim", `${usage.turns}t`);
+        if (usage.cost > 0) text += theme.fg("dim", ` $${usage.cost.toFixed(3)}`);
+      }
+
+      if (expanded) {
         const output = result.content[0];
         if (output?.type === "text" && output.text) {
-          const outputLines = output.text.split("\n");
-          for (const line of outputLines) {
+          for (const line of output.text.split("\n")) {
             text += "\n" + theme.fg("dim", line);
           }
         }
-        return new Text(text, 0, 0);
-      }
-
-      // ── Background: spawned status ──
-      let text = theme.fg("success", "\u2713 spawned ") +
-        theme.fg("dim", `(${details?.runtimeMode || "unknown"})`);
-
-      if (expanded && details?.agentId) {
-        text += "\n  " + theme.fg("dim", `Agent: ${details.agentId}`);
+      } else {
+        const output = result.content[0];
+        if (output?.type === "text" && output.text) {
+          const preview = output.text.split("\n").find((l: string) => l.trim()) || "";
+          const short = preview.length > 50 ? preview.slice(0, 50) + "\u2026" : preview;
+          if (short) text += "  " + theme.fg("dim", short);
+        }
       }
 
       return new Text(text, 0, 0);
