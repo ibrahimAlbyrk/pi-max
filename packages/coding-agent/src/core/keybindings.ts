@@ -39,7 +39,8 @@ export type AppAction =
 	| "scrollPageUp"
 	| "scrollPageDown"
 	| "scrollToTop"
-	| "scrollToBottom";
+	| "scrollToBottom"
+	| "historySearch";
 
 /**
  * All configurable actions.
@@ -82,6 +83,7 @@ export const DEFAULT_APP_KEYBINDINGS: Record<AppAction, KeyId | KeyId[]> = {
 	scrollPageDown: [],
 	scrollToTop: [],
 	scrollToBottom: [],
+	historySearch: "alt+r",
 };
 
 /**
@@ -119,6 +121,7 @@ const APP_ACTIONS: AppAction[] = [
 	"scrollPageDown",
 	"scrollToTop",
 	"scrollToBottom",
+	"historySearch",
 ];
 
 function isAppAction(action: string): action is AppAction {

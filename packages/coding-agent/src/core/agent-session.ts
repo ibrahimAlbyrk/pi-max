@@ -23,8 +23,21 @@ import type {
 	AgentTool,
 	ThinkingLevel,
 } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@mariozechner/pi-ai";
-import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsXhigh } from "@mariozechner/pi-ai";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	SystemPromptBlock,
+	TextContent,
+} from "@mariozechner/pi-ai";
+import {
+	flattenSystemPrompt,
+	isContextOverflow,
+	modelsAreEqual,
+	resetApiProviders,
+	supportsXhigh,
+} from "@mariozechner/pi-ai";
 import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
@@ -73,6 +86,7 @@ import { registerDpsCommands } from "./features/dps/commands.js";
 import { setupDpsFeature } from "./features/dps/index.js";
 import { registerLspCommands } from "./features/lsp/commands.js";
 import { setupLspFeature } from "./features/lsp/index.js";
+import { registerPromptHistoryCommands } from "./features/prompt-history-search.js";
 import type { RestrictionChecker } from "./features/restrictions/index.js";
 import { setupRestrictionsFeature, wrapToolWithRestrictions } from "./features/restrictions/index.js";
 import { registerTaskCommands } from "./features/task/commands.js";
@@ -297,7 +311,7 @@ export class AgentSession {
 		(ctx: { cwd: string }) => Promise<
 			| {
 					/** Override the base system prompt for this turn (e.g., DPS-composed prompt). */
-					systemPrompt?: string;
+					systemPrompt?: string | SystemPromptBlock[];
 					messages?: Array<{
 						customType: string;
 						content: string | (ImageContent | TextContent)[];
@@ -746,7 +760,7 @@ export class AgentSession {
 	onBeforeAgentStart(
 		handler: (ctx: { cwd: string }) => Promise<
 			| {
-					systemPrompt?: string;
+					systemPrompt?: string | SystemPromptBlock[];
 					messages?: Array<{
 						customType: string;
 						content: string | (ImageContent | TextContent)[];
@@ -943,7 +957,7 @@ export class AgentSession {
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
-		return this.agent.state.systemPrompt;
+		return flattenSystemPrompt(this.agent.state.systemPrompt) ?? "";
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -1192,7 +1206,8 @@ export class AgentSession {
 		// Built-in features (e.g., DPS) may return a systemPrompt to compose the base prompt
 		// dynamically. Their result is used as the effective base for the extension runner,
 		// allowing extensions to see and optionally modify the DPS-composed prompt.
-		let builtinSystemPrompt: string | undefined;
+		// The result may be a string or SystemPromptBlock[] (for cache-aware splitting).
+		let builtinSystemPrompt: string | SystemPromptBlock[] | undefined;
 		for (const handler of this._builtinBeforeAgentStartHandlers) {
 			const result = await handler({ cwd: this._cwd });
 			if (result?.systemPrompt) {
@@ -1213,16 +1228,16 @@ export class AgentSession {
 			}
 		}
 
-		// Effective base prompt: built-in feature composed (DPS) or static fallback
-		const effectiveBasePrompt = builtinSystemPrompt ?? this._baseSystemPrompt;
+		// Effective base prompt: built-in feature composed (DPS blocks) or static fallback
+		const effectiveBasePrompt: string | SystemPromptBlock[] = builtinSystemPrompt ?? this._baseSystemPrompt;
 
-		// Emit before_agent_start extension event (receives effective base prompt as context)
+		// Emit before_agent_start extension event.
+		// Extensions receive a flattened string for backward compatibility.
+		// If an extension modifies the prompt, the result is a string (cache blocks are lost).
+		// If no extension modifies, the original blocks are preserved for cache optimization.
 		if (this._extensionRunner) {
-			const result = await this._extensionRunner.emitBeforeAgentStart(
-				expandedText,
-				currentImages,
-				effectiveBasePrompt,
-			);
+			const flatPrompt = flattenSystemPrompt(effectiveBasePrompt) ?? "";
+			const result = await this._extensionRunner.emitBeforeAgentStart(expandedText, currentImages, flatPrompt);
 			// Add all custom messages from extensions
 			if (result?.messages) {
 				for (const msg of result.messages) {
@@ -1237,14 +1252,16 @@ export class AgentSession {
 					});
 				}
 			}
-			// Apply extension-modified system prompt, or use the effective base
+			// Apply extension-modified system prompt, or preserve original blocks
 			if (result?.systemPrompt) {
+				// Extension modified the prompt — use the string (loses cache blocks)
 				this.agent.setSystemPrompt(result.systemPrompt);
 			} else {
+				// No extension modification — preserve original blocks for cache optimization
 				this.agent.setSystemPrompt(effectiveBasePrompt);
 			}
 		} else {
-			// No extension runner — apply effective prompt directly
+			// No extension runner — apply effective prompt directly (preserves blocks)
 			this.agent.setSystemPrompt(effectiveBasePrompt);
 		}
 
@@ -2526,6 +2543,8 @@ export class AgentSession {
 			this._extensionRunner.registerBuiltinExtension("<builtin-task>", registerTaskCommands);
 			// Register built-in /dps:log and /dps:reload debug commands.
 			this._extensionRunner.registerBuiltinExtension("<builtin-dps>", registerDpsCommands);
+			// Register built-in prompt history search (Alt+R shortcut and /history command).
+			this._extensionRunner.registerBuiltinExtension("<builtin-prompt-history>", registerPromptHistoryCommands);
 
 			// Extension tools registered via pi.registerTool() are added next; all
 			// registrations (including duplicates across extensions) reach ToolRegistry,
