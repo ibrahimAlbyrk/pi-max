@@ -1,9 +1,0 @@
-{
-	"name": "dynamic-prompt-system",
-	"version": "1.0.0",
-	"type": "module",
-	"description": "Dynamic Prompt System — modular, runtime-aware system prompt injection for Pi CLI",
-	"pi": {
-		"extensions": ["./index.ts"]
-	}
-}
