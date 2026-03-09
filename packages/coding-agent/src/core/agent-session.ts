@@ -84,9 +84,11 @@ import { registerBgCommands } from "./features/bg/commands.js";
 import { setupBgFeature } from "./features/bg/index.js";
 import { registerDpsCommands } from "./features/dps/commands.js";
 import { setupDpsFeature } from "./features/dps/index.js";
+import { registerImageMarkers } from "./features/image-markers.js";
 import { registerLspCommands } from "./features/lsp/commands.js";
 import { setupLspFeature } from "./features/lsp/index.js";
 import { registerPromptHistoryCommands } from "./features/prompt-history-search.js";
+import { registerPromptUrlWidget } from "./features/prompt-url-widget.js";
 import type { RestrictionChecker } from "./features/restrictions/index.js";
 import { setupRestrictionsFeature, wrapToolWithRestrictions } from "./features/restrictions/index.js";
 import { registerTaskCommands } from "./features/task/commands.js";
@@ -2545,6 +2547,10 @@ export class AgentSession {
 			this._extensionRunner.registerBuiltinExtension("<builtin-dps>", registerDpsCommands);
 			// Register built-in prompt history search (Alt+R shortcut and /history command).
 			this._extensionRunner.registerBuiltinExtension("<builtin-prompt-history>", registerPromptHistoryCommands);
+			// Register built-in prompt URL widget (GitHub PR/Issue URL detection and metadata display).
+			this._extensionRunner.registerBuiltinExtension("<builtin-prompt-url-widget>", registerPromptUrlWidget);
+			// Register built-in image markers (clipboard image paste → [Image #N] markers + base64 embedding).
+			this._extensionRunner.registerBuiltinExtension("<builtin-image-markers>", registerImageMarkers);
 
 			// Extension tools registered via pi.registerTool() are added next; all
 			// registrations (including duplicates across extensions) reach ToolRegistry,
