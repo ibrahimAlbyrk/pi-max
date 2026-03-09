@@ -40,6 +40,8 @@ export type McpServerConfig = TransportConfig & {
 	env?: Record<string, string>;
 	/** If true, this server is ignored entirely */
 	disabled?: boolean;
+	/** If false, connect at startup and stay connected (no idle disconnect). Default: true. */
+	lazyConnect?: boolean;
 	/** Connection timeout in ms. Overrides the global default. */
 	connectionTimeout?: number;
 	/** Idle disconnect timeout in ms. Overrides the global default. */
@@ -91,6 +93,18 @@ export interface PoolEntry {
 
 // ─── Tool Catalog ─────────────────────────────────────────────────────────────
 
+/** Rich parameter metadata extracted from the MCP tool's input schema */
+export interface ParameterInfo {
+	/** Parameter name */
+	name: string;
+	/** JSON Schema type (e.g. "string", "number", "boolean", "object", "array") */
+	type: string;
+	/** Parameter description from the schema, if available */
+	description: string;
+	/** Whether this parameter is required */
+	required: boolean;
+}
+
 /** Lightweight metadata for a single tool, stored in the in-memory catalog */
 export interface CatalogEntry {
 	/** Name of the MCP server that owns this tool */
@@ -101,8 +115,10 @@ export interface CatalogEntry {
 	qualifiedName: string;
 	/** Tool description as returned by the MCP server */
 	description: string;
-	/** List of parameter names (names only — no type or schema information) */
+	/** List of parameter names (names only — used for search and mcp_search output) */
 	parameterSummary: string[];
+	/** Rich parameter details (used for /mcp tool detail view) */
+	parameters: ParameterInfo[];
 }
 
 /** Per-server metadata stored alongside the catalog entries on disk */

@@ -245,14 +245,19 @@ function scoreEntry(entry: CatalogEntry, lowerQuery: string): number {
 function isCatalogEntry(value: unknown): value is CatalogEntry {
 	if (!value || typeof value !== "object") return false;
 	const v = value as Record<string, unknown>;
-	return (
+	const hasBase =
 		typeof v["serverName"] === "string" &&
 		typeof v["toolName"] === "string" &&
 		typeof v["qualifiedName"] === "string" &&
 		typeof v["description"] === "string" &&
 		Array.isArray(v["parameterSummary"]) &&
-		(v["parameterSummary"] as unknown[]).every((p) => typeof p === "string")
-	);
+		(v["parameterSummary"] as unknown[]).every((p) => typeof p === "string");
+	if (!hasBase) return false;
+	// Backfill parameters for old disk-cache entries that lack it
+	if (!Array.isArray(v["parameters"])) {
+		(v as Record<string, unknown>)["parameters"] = [];
+	}
+	return true;
 }
 
 /** Runtime type-guard for `CatalogServerMeta`. */

@@ -36,6 +36,12 @@ const searchParams = Type.Object({
 				"Use when new tools may have been added or a server was updated. Default: false.",
 		}),
 	),
+	limit: Type.Optional(
+		Type.Number({
+			description: "Max results to return. Default: 20.",
+			minimum: 1,
+		}),
+	),
 });
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
@@ -116,7 +122,7 @@ export function createSearchTool(
 			// Step 3 — search
 			const results = catalog.search(params.query, {
 				server: params.server,
-				limit: DEFAULT_SEARCH_LIMIT,
+				limit: params.limit ?? DEFAULT_SEARCH_LIMIT,
 			});
 
 			// Step 4 — no results case

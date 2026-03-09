@@ -353,6 +353,10 @@ export class McpClientPool {
 		this.clearIdleTimer(entry);
 
 		const serverConfig = this.config.servers[serverName];
+
+		// Persistent connections (lazyConnect: false) skip idle timeout entirely.
+		if (serverConfig?.lazyConnect === false) return;
+
 		const idleTimeout = serverConfig?.idleTimeout ?? this.config.defaults.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;
 
 		entry.idleTimer = setTimeout(() => {

@@ -39,6 +39,7 @@ const KNOWN_SERVER_FIELDS = new Set([
 	"headers",
 	"env",
 	"disabled",
+	"lazyConnect",
 	"connectionTimeout",
 	"idleTimeout",
 ]);
@@ -256,6 +257,8 @@ function parseServerConfig(
 
 	const disabled =
 		typeof obj.disabled === "boolean" ? obj.disabled : undefined;
+	const lazyConnect =
+		typeof obj.lazyConnect === "boolean" ? obj.lazyConnect : undefined;
 	const connectionTimeout =
 		typeof obj.connectionTimeout === "number"
 			? obj.connectionTimeout
@@ -305,6 +308,7 @@ function parseServerConfig(
 		};
 		if (env !== undefined) config.env = env;
 		if (disabled !== undefined) config.disabled = disabled;
+		if (lazyConnect !== undefined) config.lazyConnect = lazyConnect;
 		if (connectionTimeout !== undefined)
 			config.connectionTimeout = connectionTimeout;
 		if (idleTimeout !== undefined) config.idleTimeout = idleTimeout;
@@ -338,6 +342,7 @@ function parseServerConfig(
 	if (headers !== undefined) config.headers = headers;
 	if (env !== undefined) config.env = env;
 	if (disabled !== undefined) config.disabled = disabled;
+	if (lazyConnect !== undefined) config.lazyConnect = lazyConnect;
 	if (connectionTimeout !== undefined)
 		config.connectionTimeout = connectionTimeout;
 	if (idleTimeout !== undefined) config.idleTimeout = idleTimeout;
@@ -420,6 +425,56 @@ function emptyConfig(): McpConfig {
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Save MCP server configuration to disk.
+ *
+ * Writes the `servers` record (plus current defaults) to either the
+ * project-local `.pi/mcp.json` or the global `~/.pi/agent/mcp.json`.
+ * Creates parent directories as needed. Does not touch the other scope's file.
+ *
+ * @param cwd      Working directory (used to resolve project-local path)
+ * @param config   The full McpConfig to persist (servers + defaults)
+ * @param scope    Which config file to write: "local" or "global"
+ */
+export function saveConfig(
+	cwd: string,
+	config: McpConfig,
+	scope: "local" | "global",
+): void {
+	const filePath =
+		scope === "local"
+			? path.join(cwd, ".pi", "mcp.json")
+			: path.join(os.homedir(), ".pi", "agent", "mcp.json");
+
+	// Build the raw JSON structure (strip the runtime `name` field from each server
+	// since the name is the key in the JSON object).
+	const rawServers: Record<string, Record<string, unknown>> = {};
+	for (const [name, server] of Object.entries(config.servers)) {
+		const { name: _name, ...rest } = server;
+		rawServers[name] = rest;
+	}
+
+	const jsonObj: Record<string, unknown> = { servers: rawServers };
+
+	// Only include defaults if they differ from the built-in defaults.
+	const d = config.defaults;
+	const hasCustomDefaults =
+		(d.connectionTimeout !== undefined &&
+			d.connectionTimeout !== DEFAULT_CONNECTION_TIMEOUT) ||
+		(d.idleTimeout !== undefined &&
+			d.idleTimeout !== DEFAULT_IDLE_TIMEOUT) ||
+		(d.maxResultSize !== undefined &&
+			d.maxResultSize !== DEFAULT_MAX_RESULT_SIZE);
+
+	if (hasCustomDefaults) {
+		jsonObj.defaults = d;
+	}
+
+	const dir = path.dirname(filePath);
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(filePath, JSON.stringify(jsonObj, null, 2) + "\n", "utf8");
+}
 
 /**
  * Load and merge MCP configuration from:

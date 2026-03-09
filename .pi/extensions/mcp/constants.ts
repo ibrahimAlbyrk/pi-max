@@ -34,4 +34,4 @@ export const DEFAULT_MAX_RESULT_SIZE = 50 * 1024;
 // ─── Catalog Search (section 7.5) ────────────────────────────────────────────
 
 /** Default maximum number of results returned by a single mcp_search query */
-export const DEFAULT_SEARCH_LIMIT = 5;
+export const DEFAULT_SEARCH_LIMIT = 20;
