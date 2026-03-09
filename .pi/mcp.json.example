@@ -1,0 +1,28 @@
+{
+  "servers": {
+    "github": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    },
+    "sentry": {
+      "transport": "http",
+      "url": "https://mcp.sentry.io/sse",
+      "headers": {
+        "Authorization": "Bearer ${SENTRY_TOKEN}"
+      }
+    }
+  },
+  "defaults": {
+    "connectionTimeout": 30000,
+    "idleTimeout": 300000
+  }
+}
