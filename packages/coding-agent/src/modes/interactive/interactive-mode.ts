@@ -64,6 +64,7 @@ import type {
 } from "../../core/extensions/index.js";
 import { BgBadge } from "../../core/features/bg/badge.js";
 import { getProcessManager } from "../../core/features/bg/index.js";
+import { CustomStatuslineComponent } from "../../core/features/custom-statusline.js";
 import { installLspPackage, isLspPackageAvailable } from "../../core/features/lsp/availability.js";
 import { applySelection, showHistorySearch } from "../../core/features/prompt-history-search.js";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
@@ -97,7 +98,6 @@ import { DynamicBorder } from "./components/dynamic-border.js";
 import { ExtensionEditorComponent } from "./components/extension-editor.js";
 import { ExtensionInputComponent } from "./components/extension-input.js";
 import { ExtensionSelectorComponent } from "./components/extension-selector.js";
-import { FooterComponent } from "./components/footer.js";
 import { appKey, appKeyHint, editorKey, keyHint, rawKeyHint } from "./components/keybinding-hints.js";
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
@@ -180,7 +180,7 @@ export class InteractiveMode {
 	private fdPath: string | undefined;
 	private editorContainer: Container;
 	private footerContainer: Container;
-	private footer: FooterComponent;
+	private footer: CustomStatuslineComponent;
 	private footerDataProvider: FooterDataProvider;
 	private keybindings: KeybindingsManager;
 	private version: string;
@@ -315,8 +315,7 @@ export class InteractiveMode {
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider();
-		this.footer = new FooterComponent(session, this.footerDataProvider);
-		this.footer.setAutoCompactEnabled(session.autoCompactionEnabled);
+		this.footer = new CustomStatuslineComponent(session, this.footerDataProvider);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
 
@@ -3885,7 +3884,6 @@ export class InteractiveMode {
 				{
 					onAutoCompactChange: (enabled) => {
 						this.session.setAutoCompactionEnabled(enabled);
-						this.footer.setAutoCompactEnabled(enabled);
 					},
 					onShowImagesChange: (enabled) => {
 						this.settingsManager.setShowImages(enabled);

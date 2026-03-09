@@ -82,6 +82,7 @@ import {
 } from "./extensions/index.js";
 import { registerBgCommands } from "./features/bg/commands.js";
 import { setupBgFeature } from "./features/bg/index.js";
+import { setupCustomStatuslineHooks } from "./features/custom-statusline.js";
 import { registerDpsCommands } from "./features/dps/commands.js";
 import { setupDpsFeature } from "./features/dps/index.js";
 import { registerImageMarkers } from "./features/image-markers.js";
@@ -382,6 +383,7 @@ export class AgentSession {
 		const dpsFeature = setupDpsFeature(this);
 		setupTaskFeature(this, dpsFeature);
 		setupRestrictionsFeature(this);
+		setupCustomStatuslineHooks(this);
 	}
 
 	/** Model registry for API key resolution and model discovery */
