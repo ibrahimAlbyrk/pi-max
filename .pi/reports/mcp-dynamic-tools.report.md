@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Bu rapor, pi CLI'ye MCP (Model Context Protocol) destegi eklenmesi icin **runtime'da dinamik tool load/unload** mekanizmasi tasarimi uzerine derinlemesine bir analiz sunar. Claude'un Tool Search Tool yaklasimi, MCP protokolunun native `notifications/tools/list_changed` mekanizmasi ve Anthropic'in "Code Execution with MCP" yaklasimi incelenmis; pi CLI'nin mevcut extension/tool mimarisi uzerinde bu kavramlarin nasil uygulanabilecegi detaylandirilmistir.
+Bu rapor, pi CLI'ye MCP (Model Context Protocol) destegi eklenmesi icin **proxy-based tool discovery ve execution** mekanizmasi tasarimi uzerine derinlemesine bir analiz sunar. Claude'un Tool Search Tool yaklasimi, MCP protokolunun native `notifications/tools/list_changed` mekanizmasi ve Anthropic'in "Code Execution with MCP" yaklasimi incelenmis; pi CLI'nin mevcut extension/tool mimarisi uzerinde bu kavramlarin nasil uygulanabilecegi detaylandirilmistir.
 
 ---
 
@@ -14,18 +14,20 @@ pi CLI'nin tool sistemi su katmanlardan olusur:
 
 ```
 Agent (pi-agent-core)
-  └── AgentTool[] (setTools ile runtime'da degistirilebilir)
-       ├── Base Tools: read, bash, edit, write, grep, find, ls, webfetch, websearch
-       ├── Extension Tools: pi.registerTool() ile kaydedilen toollar
-       └── SDK Custom Tools: createAgentSession({ customTools }) ile eklenenler
+  └── ToolRegistry (single source of truth)
+       ├── Builtin Tools: read, bash, edit, write, webfetch, websearch, ask_user
+       ├── Extension Tools: pi.registerTool() ile kaydedilen toollar (registerExtension)
+       └── SDK Custom Tools: createAgentSession({ customTools }) ile eklenenler (registerSdk)
 ```
 
 **Kritik noktalar:**
-- `Agent.setTools()` runtime'da tool listesini degistirebilir
-- `AgentSession._buildRuntime()` tum toolları yeniden olusturur (reload icin kullanilir)
-- Extension sistemi `wrapToolsWithExtensions()` ile tool_call/tool_result event'lerini intercept edebilir
-- `getActiveTools()` / `setActiveTools()` ile hangi toollarin aktif oldugu runtime'da degistirilebilir
-- System prompt her turn basinda yeniden olusturulur ve aktif tool listesini icerir
+- `ToolRegistry` sinifi tum tool metadata'sini yonetir (registration priority: SDK > extension > builtin, last-write-wins)
+- `AgentSession._buildRuntime()` startup'ta tum tool'lari kaydeder, wrap eder ve `_toolRegistry` Map'ine yazar
+- Tool wrapping pipeline: context injection → middleware → extension intercept → restriction wrapper
+- `setActiveToolsByName()` pre-built `_toolRegistry` Map'inden secer ve system prompt'u rebuild eder
+- Extension sistemi `wrapToolWithExtensions()` ile tool_call/tool_result event'lerini intercept edebilir
+- `registerMiddleware()` ile tool bazinda middleware eklenebilir
+- System prompt her tool degisikliginde yeniden olusturulur ve aktif tool listesini icerir
 
 ### 1.2 Extension Sistemi
 
@@ -65,9 +67,9 @@ Claude'un dokumantasyonundan:
 
 ### 2.3 Hedef
 
-Agent'in **ihtiyac duyuldugunda** MCP tool'larini kesfedip yuklemesi, kullandiktan sonra unload etmesi. Boylece:
-- Context'te yalnizca aktif kullanilan tool tanimlari bulunur
-- Tool secim dogrulugu yuksek kalir
+Agent'in **ihtiyac duyuldugunda** MCP tool'larini arayip proxy uzerinden cagirmasi. Boylece:
+- Context'te yalnizca 2 sabit tool tanimi bulunur (mcp_search + mcp_call)
+- Tool secim dogrulugu yuksek kalir (agent kendi tool'larindan sadece 2 MCP tool gorur)
 - Session boyunca farkli MCP server'lardaki yuzlerce tool'a erisim mumkun olur
 
 ---
@@ -123,8 +125,7 @@ Anthropic'in onerileri:
 │  Active Tools                                                │
 │  ├── read, bash, edit, write (built-in)                     │
 │  ├── mcp_search (always loaded — lightweight meta-tool)     │
-│  ├── mcp_call (always loaded — executes any MCP tool)       │
-│  └── [dynamically loaded MCP tools — only when needed]      │
+│  └── mcp_call (always loaded — executes any MCP tool)       │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
          │                    │                    │
@@ -157,34 +158,22 @@ MCP server tanimlarinin tutuldugu konfigurasyon katmani.
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" },
-      "autoConnect": false,        // lazy connection
-      "toolPolicy": "deferred"     // "deferred" | "always" | "disabled"
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
     },
     "sentry": {
       "transport": "http",
       "url": "https://mcp.sentry.io/sse",
-      "headers": { "Authorization": "Bearer ${SENTRY_TOKEN}" },
-      "autoConnect": false,
-      "toolPolicy": "deferred"
+      "headers": { "Authorization": "Bearer ${SENTRY_TOKEN}" }
     },
     "filesystem": {
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-      "autoConnect": true,         // eager connection
-      "toolPolicy": "always"       // always in context
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
     }
   },
   "defaults": {
-    "autoConnect": false,
-    "toolPolicy": "deferred",
     "connectionTimeout": 30000,
     "idleTimeout": 300000          // 5 min idle → disconnect
-  },
-  "search": {
-    "strategy": "fuzzy",           // "fuzzy" | "semantic" | "prefix"
-    "maxResults": 5
   }
 }
 ```
@@ -197,13 +186,9 @@ Tum MCP server'lardan toplanan tool metadata'larinin lightweight cache'i.
 interface ToolCatalogEntry {
   serverName: string;
   toolName: string;
-  qualifiedName: string;     // "github.search_repositories"
+  qualifiedName: string;     // "github__search_repositories"
   description: string;
   parameterNames: string[];  // sadece isimler — full schema degil
-  tags: string[];            // auto-extracted keywords
-  tokenCost: number;         // estimated tokens for full definition
-  lastUsed?: number;         // timestamp
-  useCount: number;
 }
 
 interface ToolCatalog {
@@ -212,7 +197,6 @@ interface ToolCatalog {
   
   search(query: string, limit?: number): ToolCatalogEntry[];
   refresh(serverName?: string): Promise<void>;
-  getFullDefinition(qualifiedName: string): Promise<MCPToolDefinition>;
 }
 ```
 
@@ -245,13 +229,13 @@ interface MCPClientPool {
 
 **Baglanti lifecycle:**
 1. `disconnected` → Agent bir tool'a ihtiyac duyar
-2. `connecting` → stdio process baslatilir veya HTTP baglantisinir kurulur
+2. `connecting` → stdio process baslatilir veya HTTP baglantisi kurulur
 3. `connected` → Tool cagrilari yapilabilir
 4. Idle timeout → `disconnected` (process kill / connection close)
 
 #### Layer 4: Gateway Tools (LLM Interface)
 
-Agent'in MCP ekosistemiyle etkilesim noktasi. Iki temel tool:
+Agent'in MCP ekosistemiyle etkilesim noktasi. Iki sabit tool:
 
 ##### `mcp_search` — Lightweight Discovery Tool
 
@@ -275,15 +259,15 @@ Agent'in MCP ekosistemiyle etkilesim noktasi. Iki temel tool:
     type: "text",
     text: `Found 3 matching tools:
 
-1. github.search_repositories
+1. github__search_repositories
    Search GitHub repositories by query
    Server: github | Params: query, sort, order, per_page
 
-2. github.search_code  
+2. github__search_code  
    Search code across GitHub repositories
    Server: github | Params: query, sort, order, per_page
 
-3. sentry.search_issues
+3. sentry__search_issues
    Search Sentry issues by query
    Server: sentry | Params: query, project, sort`
   }]
@@ -299,7 +283,7 @@ Agent'in MCP ekosistemiyle etkilesim noktasi. Iki temel tool:
   description: "Call any MCP tool. First use mcp_search to find the tool, " +
     "then call it here with the qualified name and parameters.",
   parameters: {
-    tool: string,         // qualified name: "github.search_repositories"
+    tool: string,         // qualified name: "github__search_repositories"
     params: object        // tool-specific parameters
   }
 }
@@ -309,31 +293,12 @@ Agent'in MCP ekosistemiyle etkilesim noktasi. Iki temel tool:
 - Yalnizca 2 tool context'te (~500 token total)
 - Agent herhangi bir MCP tool'u cagrirabilir
 - Yeni server eklendiginde agent'in tool listesini degistirmeye gerek yok
+- Provider-agnostic: herhangi bir LLM ile calisir
+- pi'nin ToolRegistry sistemiyle tam uyumlu (startup'ta register, pre-wrap, bitti)
 
 **Dezavantajlar:**
 - Extra bir LLM turn gerektirir (search → call)
-- Parametre validation LLM'e birakiliyor
-
-##### Alternatif: Dynamic Tool Injection
-
-Bazi durumlarda `mcp_search` sonucu olarak tool'lari dogrudan agent'in tool listesine enjekte etmek daha verimli olabilir:
-
-```typescript
-// mcp_search sonucu: tool_reference benzeri mekanizma
-// search sonrasi, bulunan tool'lar agent.setTools() ile eklenir
-// bu turn boyunca agent dogrudan tool'u cagirabilir
-
-pi.on("tool_result", async (event, ctx) => {
-  if (event.toolName === "mcp_search" && !event.isError) {
-    const foundTools = parseSearchResults(event);
-    for (const tool of foundTools) {
-      dynamicallyLoadTool(tool, ctx);  // agent tools'a ekle
-    }
-  }
-});
-```
-
-Bu yaklasim Claude'un `tool_reference` mekanizmasina benzer: search sonrasi tool tanimlari **otomatik olarak** context'e eklenir.
+- Parametre validation LLM'e birakiliyor (MCP server hata donerse agent tekrar dener)
 
 ### 4.3 Lifecycle: Bir MCP Tool Cagrisinin Anatomisi
 
@@ -343,74 +308,30 @@ Turn 1: User asks "What are the open Sentry issues for project X?"
 1. Agent gorur: mcp_search + mcp_call toollari mevcut
 2. Agent cagirir: mcp_search({ query: "sentry issues" })
 3. Extension handler:
-   a. ToolCatalog.search("sentry issues") → [sentry.search_issues, sentry.list_issues]
+   a. ToolCatalog.search("sentry issues") → [sentry__search_issues, sentry__list_issues]
    b. Sonuclari dondurur (isim + description + param isimleri)
-   c. [Opsiyonel] Bulunan tool'lari agent tool listesine inject eder
-4. Agent cagirir: mcp_call({ tool: "sentry.list_issues", params: { project: "X", status: "open" } })
-   VEYA (inject modunda): sentry.list_issues({ project: "X", status: "open" })
+4. Agent cagirir: mcp_call({ tool: "sentry__list_issues", params: { project: "X", status: "open" } })
 5. Extension handler:
    a. MCPClientPool.getClient("sentry") → lazy connect
    b. client.callTool("list_issues", params) → MCP protocol call
    c. Sonucu agent'a dondurur
 6. Agent kullaniciya cevap verir
 
-Turn 2+: Agent artik sentry tool'larini biliyor, dogrudan cagirabilir
-  (eger inject modu kullaniliyorsa)
+Turn 2+: Agent mcp_search olmadan dogrudan mcp_call yapabilir
+  (eger tool ismini onceki turn'den hatırliyorsa)
 
-Idle timeout sonrasi: Sentry baglantisi kapanir, tool'lar listeden cikarilir
+Idle timeout sonrasi: Sentry baglantisi kapanir.
+Sonraki mcp_call: Otomatik yeniden baglanir.
 ```
 
-### 4.4 Tool Unloading Stratejisi
+### 4.4 Connection Lifecycle
 
-Unloading iki seviyede gerceklesir:
+Baglanti yonetimi yalnizca server seviyesinde gerceklesir:
 
-**Seviye 1: Tool Definition Unloading (Context Relief)**
-- Bir tool belirli bir sure kullanilmazsa, definition context'ten cikarilir
-- `turn_end` event'inde kullanilmayan tool'lar kontrol edilir
-- Configurable threshold: N turn kullanilmadiysa unload
-
-```typescript
-interface UnloadPolicy {
-  strategy: "turn-count" | "time-based" | "context-pressure";
-  
-  // turn-count: N turn kullanilmadiysa unload
-  maxIdleTurns?: number;       // default: 3
-  
-  // time-based: N ms kullanilmadiysa unload
-  maxIdleMs?: number;          // default: 300000 (5 min)
-  
-  // context-pressure: context usage %X'i astiginda en az kullanilanlari unload et
-  contextThreshold?: number;   // default: 0.7 (70%)
-}
-```
-
-**Seviye 2: Connection Unloading (Resource Relief)**
-- Bir server'in hicbir tool'u aktif degilse, connection kapatilir
-- stdio: process kill
-- HTTP: connection close
-- Configurable idle timeout
-
-### 4.5 Context-Aware Loading
-
-Agent'in context durumuna gore adaptive davranis:
-
-```typescript
-pi.on("before_agent_start", async (event, ctx) => {
-  const usage = ctx.getContextUsage();
-  if (!usage) return;
-  
-  const pressure = usage.percent ?? 0;
-  
-  if (pressure > 80) {
-    // Yuksek basinc: sadece mcp_search + mcp_call (proxy mode)
-    unloadAllDynamicTools();
-  } else if (pressure > 60) {
-    // Orta basinc: son kullanilan 3 tool'u tut
-    keepMostRecentTools(3);
-  }
-  // Dusuk basinc: tum yüklenmis tool'lari tut
-});
-```
+- **Lazy connect**: Server'lara startup'ta baglanilmaz. Ilk tool cagrisi (veya catalog refresh) baglanti kurar.
+- **Idle timeout**: Configurable suresi boyunca tool cagrisi yapilmayan server baglantisi otomatik kapatilir.
+- **Auto-reconnect**: Kapatilmis baglanti, sonraki mcp_call'da otomatik yeniden kurulur.
+- **Shutdown cleanup**: Session kapandiginda tum baglantilar temiz sekilde kapatilir.
 
 ---
 
@@ -442,11 +363,7 @@ pi-mcp/
   │   ├── tools/
   │   │   ├── mcp-search.ts  # mcp_search tool definition
   │   │   ├── mcp-call.ts    # mcp_call tool definition
-  │   │   ├── mcp-servers.ts # mcp_servers tool (list/status)
-  │   │   └── injector.ts    # Dynamic tool injection logic
-  │   ├── unload/
-  │   │   ├── policy.ts      # Unload policy engine
-  │   │   └── tracker.ts     # Tool usage tracking
+  │   │   └── mcp-servers.ts # mcp_servers tool (list/status)
   │   └── prompt/
   │       └── mcp-context.ts # System prompt additions for MCP
   └── test/
@@ -491,72 +408,50 @@ Konfigurasyon:
 
 ---
 
-## 6. Alternatif Stratejiler: Karsilastirma
+## 6. Strateji: Proxy Mode
 
-### Strateji A: Proxy Mode (mcp_search + mcp_call)
+Secilen strateji **Proxy Mode**'dur. Tum MCP tool erisimleri `mcp_search` + `mcp_call` uzerinden gerceklesir. Tool tanimlari hicbir zaman agent'in tool listesine eklenmez.
 
 | Aspect | Detail |
 |--------|--------|
 | **Context cost** | ~500 token (2 tool definition) |
-| **Accuracy** | Orta — agent parametre schemalarini gormez |
-| **Latency** | +1 turn (search → call) |
-| **Complexity** | Dusuk |
+| **Accuracy** | Orta — agent parametre schemalarini gormez, ama mcp_search sonuclari parametre isimlerini icerir |
+| **Latency** | +1 turn (ilk search icin), sonrasi agent tool ismini hatirliyorsa direct mcp_call |
+| **Complexity** | Dusuk — pi'nin mevcut ToolRegistry sistemiyle tam uyumlu |
 | **Provider-agnostic** | Evet — herhangi bir LLM ile calisir |
 
-### Strateji B: Dynamic Injection (search → inject → direct call)
-
-| Aspect | Detail |
-|--------|--------|
-| **Context cost** | ~500 + N*tool_size token (N: injected tool sayisi) |
-| **Accuracy** | Yuksek — agent full schema gorur |
-| **Latency** | +1 turn (ilk search icin), sonrasi direct |
-| **Complexity** | Orta |
-| **Provider-agnostic** | Evet |
-
-### Strateji C: Hybrid (varsayilan oneri)
-
-| Aspect | Detail |
-|--------|--------|
-| **Context cost** | Adaptive: dusuk basincta inject, yuksek basincta proxy |
-| **Accuracy** | Yuksek (normal), Orta (basinc altinda) |
-| **Latency** | Optimal |
-| **Complexity** | Yuksek |
-| **Provider-agnostic** | Evet |
-
-**Oneri: Strateji C (Hybrid)** — context pressure'a gore strateji degistir:
-- Dusuk pressure (<60%): Tool injection — full schema, direct call
-- Orta pressure (60-80%): Sadece en cok kullanilan N tool inject, gerisi proxy
-- Yuksek pressure (>80%): Pure proxy mode — yalnizca mcp_search + mcp_call
+**Neden bu strateji:**
+- pi'nin ToolRegistry'si startup'ta tum tool'lari pre-wrap eder. Runtime'da yeni tool eklenmesi icin `_buildRuntime()` tekrar cagrilmali ki bu agir bir islem.
+- Proxy mode bu kisitlamaya takılmaz: sadece 2 sabit tool startup'ta kaydedilir, MCP tool'lari proxy uzerinden cagrilir.
+- Context maliyeti her durumda ~500 token ile sabit kalir, MCP server/tool sayisindan bagimsiz.
 
 ---
 
-## 7. pi CLI Extension API Ihtiyaclari
+## 7. pi CLI Extension API Uyumu
 
-Mevcut extension API'si bu implementasyon icin **buyuk olcude yeterlidir**, ancak bazi iyilestirmeler faydali olabilir:
+Mevcut extension API'si bu implementasyon icin **tam olarak yeterlidir**. Core'da degisiklik gerektirmez.
 
 ### 7.1 Mevcut API ile Yapilabilenler
 
-| İhtiyac | Mevcut API |
+| Ihtiyac | Mevcut API |
 |---------|------------|
-| Tool kaydetme | `pi.registerTool()` ✓ |
-| Event dinleme | `pi.on("turn_end", ...)` ✓ |
+| Tool kaydetme | `pi.registerTool()` → ToolRegistry'ye `registerExtension()` ile girer ✓ |
+| Event dinleme | `pi.on("turn_end", ...)`, `pi.on("session_start", ...)`, `pi.on("session_shutdown", ...)` ✓ |
 | System prompt ekleme | `pi.on("before_agent_start", ...)` ile `systemPrompt` return ✓ |
-| Context tracking | `ctx.getContextUsage()` ✓ |
-| Tool listesi yonetimi | `pi.getActiveTools()` / `pi.setActiveTools()` ✓ |
-| Session persistence | `pi.appendEntry()` ✓ |
+| Tool interception | `pi.on("tool_call", ...)` / `pi.on("tool_result", ...)` via wrapToolWithExtensions ✓ |
 | User notification | `ctx.ui.notify()` ✓ |
 | Configuration | Extension flags + mcp.json dosyasi ✓ |
 | Shutdown cleanup | `pi.on("session_shutdown", ...)` ✓ |
 
-### 7.2 Faydali Olabilecek API Eklentileri
+### 7.2 ToolRegistry Uyumluluk Notu
 
-1. **`pi.registerDeferredTool(catalog)`** — Tool tanimini context'e eklemeden registry'de tutar, agent talep ettiginde inject eder. Bu, Claude'un `defer_loading` konseptinin pi karsiligi olur.
+Proxy mode, ToolRegistry'nin pre-wrapping modeliyle **tam uyumlu**dur:
+- `mcp_search` ve `mcp_call` extension loading sirasinda `pi.registerTool()` ile kaydedilir
+- `_buildRuntime()` bunlari `runner.getAllRegisteredTools()` ile toplayip registry'ye ekler
+- Pre-wrap pipeline uygulanir (context injection → middleware → extension intercept → restriction wrapper)
+- Sonuc: iki tool `_toolRegistry` Map'inde hazir bekler
 
-2. **`pi.on("turn_start")` icinde tool listesi degistirme** — Mevcut API'de `setActiveTools` var ama turn basinda cagrildiginda next LLM call'a yetisip yetismedigini garanti etmek zor. Turn basinda tool listesini guvenle degistiren bir hook faydali olur.
-
-3. **Tool usage stats API** — Hangi tool'un hangi turn'de kullanildigini takip eden built-in mekanizma. Simdilik extension kendisi track edebilir.
-
-Bu eklentiler **opsiyoneldir**. Mevcut API ile tam bir implementasyon mumkundur.
+Runtime'da hicbir tool ekleme/cikarma islemi gerekmez. Tum MCP tool erisimleri `mcp_call` proxy'si uzerinden gerceklesir.
 
 ---
 
@@ -587,11 +482,13 @@ Bu eklentiler **opsiyoneldir**. Mevcut API ile tam bir implementasyon mumkundur.
 
 ### 9.1 Token Ekonomisi
 
-| Senaryo | Geleneksel | Proxy Mode | Hybrid |
-|---------|-----------|------------|--------|
-| 5 MCP server, 200 tool | ~150K token | ~500 token | ~2-5K token |
-| Tek bir tool cagirma | 0 ek turn | +1 turn | +1 turn (ilk), 0 (sonrasi) |
-| 10 tool aktif kullanim | ~150K token | ~500 token | ~8K token |
+| Senaryo | Geleneksel (tum tool'lar context'te) | Proxy Mode |
+|---------|--------------------------------------|------------|
+| 5 MCP server, 200 tool | ~150K token | ~500 token |
+| Tek bir tool cagirma | 0 ek turn | +1 turn (search) |
+| 10 tool aktif kullanim | ~150K token | ~500 token |
+
+Proxy mode'un **sabit ~500 token** maliyeti, MCP server/tool sayisindan tamamen bagimsizdir.
 
 ### 9.2 Latency
 
@@ -610,31 +507,27 @@ Bu eklentiler **opsiyoneldir**. Mevcut API ile tam bir implementasyon mumkundur.
 
 ## 10. Sonuc ve Oneri
 
-### Onerilen Yaklasim: Extension-Based Hybrid MCP Gateway
+### Onerilen Yaklasim: Extension-Based Proxy MCP Gateway
 
 1. **Extension olarak implement et** — pi'nin "no MCP in core" felsefesine uygun
-2. **Hybrid strateji** — context pressure'a gore proxy/injection arasinda gec
+2. **Proxy mode** — mcp_search + mcp_call ile sabit ~500 token context maliyeti
 3. **Lazy connection** — server'lara sadece ihtiyac duyuldugunda baglan
 4. **Disk-cached catalog** — startup'ta hizli tool kesfetme
-5. **Configurable unload policy** — turn-count, time-based, veya context-pressure
-6. **mcp.json konfigurasyon** — global + project-local override
+5. **mcp.json konfigurasyon** — global + project-local override
 
 ### Uygulama Oncelikleri
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| **Phase 1** | Config loader + MCP client pool (stdio only) + mcp_search + mcp_call | 2-3 gun |
-| **Phase 2** | Tool catalog + disk cache + search | 1-2 gun |
-| **Phase 3** | Dynamic injection mode + unload policy | 2-3 gun |
-| **Phase 4** | HTTP transport + context-aware hybrid mode | 1-2 gun |
-| **Phase 5** | `/mcp` command (status, connect, disconnect) + UI integration | 1 gun |
-| **Phase 6** | Test suite + documentation | 1-2 gun |
+| **Phase 1** | Config loader + MCP client pool (stdio + HTTP) + Tool catalog + disk cache + mcp_search + mcp_call | 3-5 gun |
+| **Phase 2** | `/mcp` command (status, connect, disconnect) + UI integration | 1 gun |
+| **Phase 3** | Test suite + documentation | 1-2 gun |
 
-**Toplam: ~8-13 gun**
+**Toplam: ~5-8 gun**
 
 ### Acik Sorular
 
-1. **pi package olarak mi yoksa standalone extension olarak mi dagitilmali?** pi package (`pi install npm:pi-mcp`) en temiz yaklaşim, ancak standalone extension da mumkun.
+1. **pi package olarak mi yoksa standalone extension olarak mi dagitilmali?** pi package (`pi install npm:pi-mcp`) en temiz yaklasim, ancak standalone extension da mumkun.
 
 2. **MCP Resources ve Prompts destegi eklenecek mi?** Bu rapor yalnizca Tools'a odaklanmaktadir. Resources (dosya/data) ve Prompts (template) icin ayri bir analiz yapilabilir. Resources, context injection icin kullanilabilir.
 
