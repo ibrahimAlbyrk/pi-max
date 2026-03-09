@@ -46,6 +46,7 @@
 	"dependencies": {
 		"@mariozechner/jiti": "^2.6.5",
 		"@mariozechner/pi-coding-agent": "^0.30.2",
+		"@modelcontextprotocol/sdk": "^1.27.1",
 		"get-east-asian-width": "^1.4.0",
 		"vscode-languageserver-protocol": "^3.17.5"
 	},

@@ -21,7 +21,6 @@ Phase 1 asagidakileri icerir:
 
 Phase 1 **icermeyen** konular:
 
-- Dynamic tool injection (tool tanimlarini agent tool listesine ekleme)
 - MCP Resources ve Prompts destegi
 - MCP Sampling ve Elicitation destegi
 - OAuth authentication flow
