@@ -11,7 +11,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { CompactionEntry, ReadonlySessionManager } from "../../session-manager.js";
 import { _syncToolStore, setOnStoreChanged } from "../../tools/task.js";
-import type { DpsFeature } from "../dps/index.js";
 import { appendAutoNote } from "./automation/auto-notes.js";
 import { findBestTaskForFiles, findTaskByFileContext } from "./automation/file-correlator.js";
 import { detectTestResult } from "./automation/test-detector.js";
@@ -20,7 +19,6 @@ import type { EventEmitter } from "./integration/event-bus.js";
 import { TaskEventEmitter } from "./integration/event-bus.js";
 import { handleTaskCompletionHooks } from "./integration/extension-hooks.js";
 import { generateTaskStateSummary } from "./intelligence/compaction-handler.js";
-import { buildTaskContext, determineBudgetLevel } from "./intelligence/context-injector.js";
 import { createDefaultStore, createStorage, persistToStorage, reconstructFromSession } from "./state.js";
 import { assignAgentToTask, clearAgentAssignment, findTask } from "./store.js";
 import { syncPush } from "./sync/file-sync.js";
@@ -207,7 +205,7 @@ class TaskContextImpl implements TaskContext {
  *
  * Called from AgentSession constructor after other feature setups.
  */
-export function setupTaskFeature(session: TaskFeatureSession, dpsFeature?: DpsFeature): void {
+export function setupTaskFeature(session: TaskFeatureSession): void {
 	// ── Create shared context ────────────────────────────────────────────────
 
 	const emitter: EventEmitter = {
@@ -282,28 +280,6 @@ export function setupTaskFeature(session: TaskFeatureSession, dpsFeature?: DpsFe
 			}
 		}
 	});
-
-	// ── DPS variable provider — task context ────────────────────────────────
-
-	// Register a variable provider that supplies TASK_CONTEXT so that
-	// file-based DPS templates can reference it via {{TASK_CONTEXT}}.
-	// This replaces the former __task-context programmatic segment; the
-	// content is now injected through the template variable pipeline instead
-	// of as a standalone programmatic segment in the composition layer stack.
-	if (dpsFeature) {
-		dpsFeature.registerVariableProvider({
-			provide(_context) {
-				try {
-					const info = session.getContextInfo();
-					const budgetLevel = determineBudgetLevel(info.contextWindow, info.estimatedTokens);
-					return { TASK_CONTEXT: buildTaskContext(ctx.store, budgetLevel) ?? "" };
-				} catch (err) {
-					console.error("[task] variable provider failed:", err);
-					return { TASK_CONTEXT: "" };
-				}
-			},
-		});
-	}
 
 	// ── Compaction safety ────────────────────────────────────────────────────
 

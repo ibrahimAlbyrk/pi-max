@@ -162,7 +162,7 @@ export function buildRenderVariables(
 	state: Readonly<RuntimeState>,
 	config: DPSConfig,
 	buildContext: PromptBuildContext,
-	stateManager: StateManager,
+	_stateManager: StateManager,
 ): Record<string, unknown> {
 	const now = new Date();
 	const dateTime = now.toLocaleString("en-US", {
@@ -215,7 +215,6 @@ export function buildRenderVariables(
 		DATE_TIME: dateTime,
 		MODEL_NAME: state.modelName,
 		ACTIVE_TOOLS: [...state.activeTools].join(", "),
-		GIT_BRANCH: stateManager.getGitBranch() ?? "N/A",
 		TOKEN_USAGE: state.tokenUsagePercent?.toString() ?? "unknown",
 		TURN_COUNT: state.turnCount.toString(),
 
@@ -223,8 +222,6 @@ export function buildRenderVariables(
 		TOOLS_LIST: toolsList,
 		SKILLS_SECTION: skillsSection,
 		CONTEXT_FILES_SECTION: contextFilesSection,
-		TASK_CONTEXT: "", // default; overridden by task feature's variable provider
-
 		// Backward-compat path variables
 		README_PATH: getReadmePath(),
 		DOCS_PATH: getDocsPath(),

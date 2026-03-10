@@ -7,18 +7,8 @@ dps:
   priority: 4
   conditions:
     - file_exists: .git/HEAD
-variables:
-  - name: GIT_BRANCH
-    type: string
-    required: false
-    default: "N/A"
 ---
 ## Git Context
-
-{{#if GIT_BRANCH != "N/A"}}
-Current branch: `{{GIT_BRANCH}}`
-{{/if}}
-
 - Use `git branch --show-current` to verify the active branch before making changes
 - Run `git status` before committing to review staged and unstaged changes
 - Track which files you created/modified/deleted during the session
@@ -28,7 +18,6 @@ Current branch: `{{GIT_BRANCH}}`
 - Pull with rebase before pushing: `git pull --rebase && git push`
 
 ### Forbidden Git Operations
-
 These can destroy other agents' work or bypass required checks:
 - `git reset --hard` — destroys uncommitted changes
 - `git checkout .` — destroys uncommitted changes
@@ -39,7 +28,6 @@ These can destroy other agents' work or bypass required checks:
 - force-push — never allowed
 
 ### Safe Commit Workflow
-
 ```bash
 # 1. Check status — verify only your files appear
 git status
@@ -56,7 +44,6 @@ git pull --rebase && git push
 ```
 
 ### Rebase Conflict Handling
-
 - Resolve conflicts only in files YOU modified during this session
 - If a conflict is in a file you did not modify, abort the rebase and ask the user
 - Never force-push to resolve conflicts

@@ -27,18 +27,7 @@ export function buildTaskContext(store: TaskStore, budgetLevel: "minimal" | "med
 
 	const activeTask = store.activeTaskId ? store.tasks.find((t) => t.id === store.activeTaskId) : null;
 
-	const lines: string[] = ["[TASK MANAGEMENT — OPERATIONAL PROTOCOL]"];
-
-	// ── Workflow directives (always injected, concise) ───────────
-	lines.push("");
-	lines.push("RULES:");
-	lines.push("• Before ANY implementation work, create tasks with bulk_create (one call, not loops).");
-	lines.push("• Use indentation in bulk_create text for groups: top-level items with children become groups.");
-	lines.push("  Groups (G1, G2) are organizational only — they have no status. Tasks (#1, #2) are actionable.");
-	lines.push("• One task at a time: start → work → complete → next.");
-	lines.push("• Each task = one concrete deliverable. If multi-step, create a group and split into tasks.");
-	lines.push("• When multiple operations are needed, batch them (bulk_create, not repeated create).");
-	lines.push("");
+	const lines: string[] = [];
 
 	if (activeTask) {
 		// ── Active task present ──────────────────────────────────

@@ -380,8 +380,8 @@ export class AgentSession {
 
 		setupBgFeature(this);
 		setupLspFeature(this);
-		const dpsFeature = setupDpsFeature(this);
-		setupTaskFeature(this, dpsFeature);
+		setupDpsFeature(this);
+		setupTaskFeature(this);
 		setupRestrictionsFeature(this);
 		setupCustomStatuslineHooks(this);
 	}

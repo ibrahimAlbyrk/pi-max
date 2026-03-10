@@ -28,12 +28,6 @@ When spawning subagents for parallel or delegated work:
 - Do NOT set background=true unless the user explicitly asks for it.
 - Max 10 agents can run concurrently; additional agents queue until a slot opens.
 
-**Subagent output:**
-- Subagents write to the coordinator, not directly to the user
-- Output should be technical and concise — focused on deliverables
-- Clearly state what was changed, created, or discovered
-- Flag any blockers, ambiguities, or decisions that require coordinator input
-
 **Coordination:**
 - Track spawned subagent tasks in the task system when working on a larger project
 - Merge subagent results carefully — check for conflicts before applying
