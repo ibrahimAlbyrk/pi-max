@@ -1,9 +1,0 @@
-{
-  "servers": {
-    "filesystem": {
-      "transport": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/ibrahimalbyrk/Projects/Git/pi-max", "/tmp"]
-    }
-  }
-}
