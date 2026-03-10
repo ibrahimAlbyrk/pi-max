@@ -134,13 +134,16 @@ export class InProcessAgent implements AgentHandle {
       const loader = new DefaultResourceLoader({
         cwd: this.cwd,
         systemPromptOverride: () => systemPrompt,
+        noExtensions: true,
       });
       await loader.reload();
 
       // Thinking level: explicit > inherited from main agent > "off"
       const thinkingLevel = (options.thinking || options._mainThinkingLevel || "off") as any;
 
-      // Create session
+      // Create session — pass customTools: [] to opt out of default UI tools
+      // (bg, task, lsp_*, ask_user). Subagents only get the tools explicitly
+      // requested via the tools parameter or the createCodingTools() defaults.
       const { session } = await createAgentSession({
         cwd: this.cwd,
         model,
@@ -148,6 +151,7 @@ export class InProcessAgent implements AgentHandle {
         authStorage,
         modelRegistry,
         tools,
+        customTools: [],
         resourceLoader: loader,
         sessionManager: SessionManager.inMemory(),
         settingsManager: SettingsManager.inMemory({ compaction: { enabled: true } }),

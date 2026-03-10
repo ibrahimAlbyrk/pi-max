@@ -26,6 +26,7 @@ import {
 	createSearchTool,
 	createWriteTool,
 	editTool,
+	getToolDefinitions,
 	readOnlyTools,
 	readTool,
 	searchTool,
@@ -54,7 +55,9 @@ export interface CreateAgentSessionOptions {
 
 	/** Built-in tools to use. Default: codingTools [read, bash, edit, write] */
 	tools?: Tool[];
-	/** Custom tools to register (in addition to built-in tools). */
+	/** Custom tools to register (in addition to built-in tools).
+	 * Defaults to UI-rendering ToolDefinitions (bg, task, lsp_*, ask_user).
+	 * Pass `[]` to opt out (e.g. for subagent sessions that need no UI tools). */
 	customTools?: ToolDefinition[];
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
@@ -346,7 +349,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		cwd,
 		scopedModels: options.scopedModels,
 		resourceLoader,
-		customTools: options.customTools,
+		customTools: options.customTools ?? getToolDefinitions(),
 		modelRegistry,
 		initialActiveToolNames,
 		extensionRunnerRef,

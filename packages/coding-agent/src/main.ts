@@ -509,8 +509,12 @@ function buildSessionOptions(
 		} else {
 			options.tools = [];
 		}
+		// Explicit tool selection: only listed tools, no extra SDK tools
+		options.customTools = [];
 	} else if (parsed.tools) {
 		options.tools = parsed.tools.map((name) => allTools[name]);
+		// Explicit tool selection: only listed tools, no extra SDK tools
+		options.customTools = [];
 	}
 
 	// Restrictions

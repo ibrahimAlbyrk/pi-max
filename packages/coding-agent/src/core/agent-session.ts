@@ -104,14 +104,10 @@ import type { SettingsManager } from "./settings-manager.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { ToolRegistry } from "./tool-registry.js";
-import { askUserTool } from "./tools/ask-user.js";
+
 import type { BashOperations } from "./tools/bash.js";
-import { bgToolDefinition } from "./tools/bg.js";
+
 import { createAllTools } from "./tools/index.js";
-import { lspDefinitionDefinition } from "./tools/lsp-definition.js";
-import { lspDiagnosticsDefinition } from "./tools/lsp-diagnostics.js";
-import { lspReferencesDefinition } from "./tools/lsp-references.js";
-import { taskToolDefinition } from "./tools/task.js";
 
 // ============================================================================
 // Skill Block Parsing
@@ -353,15 +349,7 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
-		this._customTools = [
-			...(config.customTools ?? []),
-			askUserTool as unknown as ToolDefinition,
-			bgToolDefinition as unknown as ToolDefinition,
-			lspDiagnosticsDefinition as unknown as ToolDefinition,
-			lspDefinitionDefinition as unknown as ToolDefinition,
-			lspReferencesDefinition as unknown as ToolDefinition,
-			taskToolDefinition as unknown as ToolDefinition,
-		];
+		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
@@ -2505,8 +2493,7 @@ export class AgentSession {
 
 		// Build the canonical tool registry as single source of truth.
 		// Registration order: built-ins first, then extension tools, then SDK tools.
-		// Last-write-wins semantics ensure SDK tools override same-named built-ins
-		// (e.g. bgToolDefinition overrides the raw createBgTool() instance).
+		// Last-write-wins semantics ensure SDK tools override same-named built-ins.
 		const registry = new ToolRegistry();
 
 		for (const [, tool] of Object.entries(baseTools)) {
