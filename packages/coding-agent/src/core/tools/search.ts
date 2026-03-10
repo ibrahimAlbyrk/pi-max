@@ -148,6 +148,12 @@ const searchSchema = Type.Object({
 				'Filter files by glob pattern in content mode (e.g., "*.ts", "*.{js,tsx}"). Passed to ripgrep --glob.',
 		}),
 	),
+	exclude: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				'Exclude results whose path contains any of these substrings. Applied in all modes (e.g., ["Generated", "obj"] to skip those directories).',
+		}),
+	),
 	literal: Type.Optional(
 		Type.Boolean({
 			description: "Treat content pattern as literal string instead of regex (default: false).",
@@ -689,6 +695,7 @@ function findRipgrep(): string | null {
 
 interface ContentSearchOptions {
 	glob?: string;
+	exclude?: string[];
 	literal?: boolean;
 	ignoreCase?: boolean;
 	context?: number;
@@ -752,6 +759,15 @@ function contentSearchRg(
 		}
 		if (options?.glob) {
 			args.push("--glob", options.glob);
+		}
+		if (options?.exclude) {
+			for (const ex of options.exclude) {
+				const normalized = ex.replace(/^\/+|\/+$/g, "");
+				if (normalized) {
+					args.push("--glob", `!**/${normalized}/**`);
+					args.push("--glob", `!**/${normalized}`);
+				}
+			}
 		}
 		if (options?.context && options.context > 0) {
 			args.push("-C", String(options.context));
@@ -931,6 +947,7 @@ function renderBrowse(
 	type: "file" | "dir" | undefined,
 	offset: number,
 	limit: number,
+	useCache: boolean = true,
 ): string {
 	const entries: string[] = [];
 
@@ -938,11 +955,11 @@ function renderBrowse(
 		if (currentDepth > depth) return;
 
 		const cacheKey = dirPath;
-		let cached = browseCache.get(cacheKey);
+		let cached = useCache ? browseCache.get(cacheKey) : undefined;
 		if (!cached) {
 			const children = buildBrowseChildren(flatIndex, dirPath);
 			cached = { children, time: Date.now() };
-			browseCache.set(cacheKey, cached);
+			if (useCache) browseCache.set(cacheKey, cached);
 		}
 
 		for (const child of cached.children) {
@@ -1183,7 +1200,9 @@ export function createSearchTool(cwd: string, _options?: SearchToolOptions): Age
 			'  search(content="TODO", path="src")     → scoped content search\n' +
 			'  search(content="useState", glob="*.tsx") → content search filtered by file type\n' +
 			'  search(content="$variable", literal=true) → literal string search (no regex)\n' +
-			'  search(content="handleAuth", context=2)  → show 2 lines before/after each match',
+			'  search(content="handleAuth", context=2)  → show 2 lines before/after each match\n' +
+			'  search(glob="*.cs", exclude=["Generated", "obj"]) → find .cs files, skip Generated/ and obj/ dirs\n' +
+			'  search(content="TODO", exclude=["node_modules", "dist"]) → content search excluding dirs',
 		parameters: searchSchema,
 		execute: async (
 			_toolCallId: string,
@@ -1222,6 +1241,7 @@ export function createSearchTool(cwd: string, _options?: SearchToolOptions): Age
 
 				const result = contentSearch(cwd, contentQuery, path, limit, CONTENT_MAX_PER_FILE, {
 					glob: params.glob,
+					exclude: params.exclude,
 					literal: params.literal,
 					ignoreCase: params.ignoreCase,
 					context: params.context,
@@ -1268,6 +1288,12 @@ export function createSearchTool(cwd: string, _options?: SearchToolOptions): Age
 					searchIndex = index.filter((e) => e.path.startsWith(prefix));
 				}
 
+				// Apply exclude filter
+				if (params.exclude && params.exclude.length > 0) {
+					const excl = params.exclude;
+					searchIndex = searchIndex.filter((e) => !excl.some((ex) => e.path.includes(ex)));
+				}
+
 				const isRegex = query.startsWith("/") && query.endsWith("/") && query.length > 2;
 
 				let results: SearchResult[];
@@ -1307,7 +1333,13 @@ export function createSearchTool(cwd: string, _options?: SearchToolOptions): Age
 				}
 			}
 
-			const output = renderBrowse(state.browseCache, index, path, depth, type, offset, limit);
+			// Apply exclude filter
+			const hasExclude = params.exclude && params.exclude.length > 0;
+			const browseIndex = hasExclude
+				? index.filter((e) => !params.exclude!.some((ex) => e.path.includes(ex)))
+				: index;
+
+			const output = renderBrowse(state.browseCache, browseIndex, path, depth, type, offset, limit, !hasExclude);
 
 			return {
 				content: [{ type: "text", text: output }],

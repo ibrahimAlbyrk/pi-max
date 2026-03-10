@@ -13,6 +13,7 @@
 ### Added
 
 - Added `search` built-in tool with content mode parameters: `glob` (file type filter), `literal` (non-regex search), `ignoreCase`, and `context` (surrounding lines)
+- Added `exclude` parameter to `search` tool: accepts a string array of substrings to exclude from results in all modes (browse, search, content). In content mode, exclusions are forwarded to ripgrep as `--glob '!**/pattern/**'` arguments. Example: `search(glob="*.cs", exclude=["Generated", "obj"])`
 - Added `excludeFromContext` field to `CustomMessage` and `CustomMessageEntry`, allowing extension-injected messages to be displayed in TUI but excluded from LLM context (similar to `!!` bash prefix behavior)
 - Added `ToolRegistry` as the canonical runtime authority for built-in, extension, and SDK tools. All tools registered via `pi.registerTool()` or `customTools` flow through it with last-write-wins semantics and duplicate tracking
 - Added registration-time validation and diagnostics API on `ToolRegistry` (`getDiagnostics()`, `validateAll()`) covering name format/length, description, label, schema sanity, and duplicate-override detection
