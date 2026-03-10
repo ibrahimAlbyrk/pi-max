@@ -7,6 +7,7 @@ dps:
   priority: 10
   conditions:
     - tool_active: read
+    - has_skills: true
 variables:
   - name: SKILLS_SECTION
     type: string

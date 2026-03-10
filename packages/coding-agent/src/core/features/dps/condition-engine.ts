@@ -148,6 +148,9 @@ function parseCondition(raw: unknown): Condition | null {
 			}
 			return { type: "model_supports", capability: value };
 
+		case "has_skills":
+			return { type: "has_skills" };
+
 		case "turns_since_tool_use": {
 			if (value === null || typeof value !== "object" || Array.isArray(value)) {
 				console.warn(
@@ -285,6 +288,9 @@ function compileCondition(condition: Condition): ConditionEvaluator {
 			const { capability } = condition;
 			return (state) => state.modelCapabilities.has(capability);
 		}
+
+		case "has_skills":
+			return (state) => state.skillsCount > 0;
 
 		case "all": {
 			const evaluators = condition.conditions.map(compileCondition);

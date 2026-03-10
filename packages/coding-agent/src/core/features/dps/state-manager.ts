@@ -23,6 +23,7 @@ function createDefaultState(): RuntimeState {
 		tokenUsagePercent: null,
 		reminderLastTriggered: new Map(),
 		reminderTriggerCount: new Map(),
+		skillsCount: 0,
 	};
 }
 
@@ -79,6 +80,11 @@ export class StateManager {
 	 */
 	setTokenUsage(percent: number | null): void {
 		this.state.tokenUsagePercent = percent;
+	}
+
+	/** Set the number of available skills for the current session. */
+	setSkillsCount(count: number): void {
+		this.state.skillsCount = count;
 	}
 
 	/**

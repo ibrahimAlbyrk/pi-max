@@ -53,6 +53,7 @@ export type Condition =
 	| { type: "turn_count_above"; count: number }
 	| { type: "turn_count_below"; count: number }
 	| { type: "model_supports"; capability: string }
+	| { type: "has_skills" }
 	| { type: "all"; conditions: Condition[] }
 	| { type: "any"; conditions: Condition[] }
 	| { type: "not"; condition: Condition };
@@ -202,6 +203,8 @@ export interface RuntimeState {
 	reminderLastTriggered: Map<string, number>;
 	/** Total trigger count per L4 reminder this session */
 	reminderTriggerCount: Map<string, number>;
+	/** Number of available skills loaded for the current session */
+	skillsCount: number;
 }
 
 // ─── DPS Configuration ───────────────────────────────────────────

@@ -336,6 +336,7 @@ export function setupDpsFeature(session: DpsFeatureSession): DpsFeature {
 		// Step 3: Build PromptBuildContext from resource loader
 		const resourceLoader = session.resourceLoader;
 		const loadedSkills = resourceLoader.getSkills().skills;
+		stateManager.setSkillsCount(loadedSkills.length);
 		const loadedContextFiles = resourceLoader.getAgentsFiles().agentsFiles;
 		const customPrompt = resourceLoader.getSystemPrompt();
 		const appendParts = resourceLoader.getAppendSystemPrompt();
