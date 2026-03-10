@@ -3,15 +3,15 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Get the absolute path to the built-in templates directory.
+ * Get the absolute path to the built-in prompts directory.
  * Works both in development (source) and production (npm package).
  */
 export function getTemplatesDir(): string {
 	const thisFile = fileURLToPath(import.meta.url);
-	// In dev: packages/prompt/src/index.ts -> packages/prompt/templates
-	// In dist: packages/prompt/dist/index.js -> packages/prompt/templates
+	// In dev: packages/prompt/src/index.ts -> packages/prompt/prompts
+	// In dist: packages/prompt/dist/index.js -> packages/prompt/prompts
 	const packageRoot = resolve(thisFile, "..", "..");
-	return resolve(packageRoot, "templates");
+	return resolve(packageRoot, "prompts");
 }
 
 // Errors

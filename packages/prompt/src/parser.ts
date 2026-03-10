@@ -65,10 +65,10 @@ function validateVariable(raw: RawVariableDefinition, filePath: string): Variabl
 }
 
 /**
- * Derive category from file path relative to templates root.
- * e.g., "templates/system/coding-agent.prompt.md" -> "system"
- * e.g., "templates/tools/read.prompt.md" -> "tools"
- * e.g., "templates/base.prompt.md" -> "root"
+ * Derive category from file path relative to prompts root.
+ * e.g., "prompts/system/coding-agent.prompt.md" -> "system"
+ * e.g., "prompts/tools/read.prompt.md" -> "tools"
+ * e.g., "prompts/base.prompt.md" -> "root"
  */
 function deriveCategory(filePath: string, templatesDir: string): string {
 	const rel = relative(templatesDir, filePath);
@@ -79,9 +79,9 @@ function deriveCategory(filePath: string, templatesDir: string): string {
 }
 
 /**
- * Derive prompt name from file path relative to templates root.
- * e.g., "templates/system/coding-agent.prompt.md" -> "system/coding-agent"
- * e.g., "templates/tools/read.prompt.md" -> "tools/read"
+ * Derive prompt name from file path relative to prompts root.
+ * e.g., "prompts/system/coding-agent.prompt.md" -> "system/coding-agent"
+ * e.g., "prompts/tools/read.prompt.md" -> "tools/read"
  */
 export function derivePromptName(filePath: string, templatesDir: string, extension: string): string {
 	const rel = relative(templatesDir, filePath);

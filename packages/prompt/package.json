@@ -7,7 +7,7 @@
 	"types": "./dist/index.d.ts",
 	"files": [
 		"dist",
-		"templates",
+		"prompts",
 		"README.md",
 		"CHANGELOG.md"
 	],
